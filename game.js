@@ -16,16 +16,23 @@ const choice = arr => arr[Math.floor(Math.random()*arr.length)];
 
 /* Beep sencillo vía WebAudio, sin dependencias externas */
 let audioCtx = null;
+let AUDIO_MUTED = false;
+try{ AUDIO_MUTED = localStorage.getItem('operacion_tifon_muted')==='1'; }catch(e){}
+function getAudioCtx(){
+  if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  return audioCtx;
+}
 function beep(freq=440, dur=0.08, type='square', vol=0.06, delay=0){
+  if(AUDIO_MUTED) return;
   try{
-    if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
-    const t0 = audioCtx.currentTime + delay;
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
+    const ac = getAudioCtx();
+    const t0 = ac.currentTime + delay;
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
     osc.type = type; osc.frequency.setValueAtTime(freq, t0);
     gain.gain.setValueAtTime(vol, t0);
     gain.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
-    osc.connect(gain).connect(audioCtx.destination);
+    osc.connect(gain).connect(ac.destination);
     osc.start(t0); osc.stop(t0+dur+0.02);
   }catch(e){ /* audio no disponible, seguir sin sonido */ }
 }
@@ -40,6 +47,94 @@ const SFX = {
   lose:()=>{beep(220,0.2,'sawtooth',0.07); beep(140,0.3,'sawtooth',0.07,0.15);},
   drop:()=>beep(300,0.1,'triangle',0.05),
 };
+
+/* -------------------- Ambiente sonoro (viento/olas) ---------------------- */
+/* Ruido sintetizado en vivo (sin archivos externos) filtrado en pasa-bajos
+   y modulado suavemente en volumen para imitar el rumor constante del mar
+   y el viento. Se detiene y se recrea limpio al empezar/salir de cada misión. */
+let ambientNodes = null;
+function startAmbient(){
+  if(AUDIO_MUTED) return;
+  stopAmbient();
+  try{
+    const ac = getAudioCtx();
+    const bufferSize = ac.sampleRate * 2;
+    const buffer = ac.createBuffer(1, bufferSize, ac.sampleRate);
+    const data = buffer.getChannelData(0);
+    for(let i=0;i<bufferSize;i++) data[i] = (Math.random()*2-1)*0.6;
+    const noise = ac.createBufferSource();
+    noise.buffer = buffer; noise.loop = true;
+    const filter = ac.createBiquadFilter();
+    filter.type='lowpass'; filter.frequency.value=420;
+    const gain = ac.createGain();
+    gain.gain.value = 0.05;
+    noise.connect(filter).connect(gain).connect(ac.destination);
+    noise.start();
+    // oleaje: sube y baja el volumen del rumor lentamente, como respiración del mar
+    const lfo = ac.createOscillator(); lfo.frequency.value = 0.11;
+    const lfoGain = ac.createGain(); lfoGain.gain.value = 0.022;
+    lfo.connect(lfoGain).connect(gain.gain);
+    lfo.start();
+    ambientNodes = { noise, filter, gain, lfo };
+  }catch(e){ /* sin ambiente si el navegador no lo soporta */ }
+}
+function stopAmbient(){
+  if(!ambientNodes) return;
+  try{ ambientNodes.noise.stop(); ambientNodes.lfo.stop(); }catch(e){}
+  ambientNodes = null;
+}
+function setMuted(m){
+  AUDIO_MUTED = m;
+  try{ localStorage.setItem('operacion_tifon_muted', m?'1':'0'); }catch(e){}
+  if(m) stopAmbient();
+}
+
+/* --------------------- Locución de radio militar -------------------------- */
+/* Usa el sintetizador de voz nativo del navegador (sin archivos de audio) para
+   dar avisos breves en momentos clave: inicio de misión, daño crítico, resultado. */
+function radioSay(text){
+  if(AUDIO_MUTED) return;
+  try{
+    if(!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'es-ES'; u.rate = 1.05; u.pitch = 0.75; u.volume = 0.75;
+    window.speechSynthesis.speak(u);
+  }catch(e){ /* sin voz disponible, seguir sin locución */ }
+}
+
+/* --------------------- Motor de avión (tono según velocidad) -------------- */
+/* No es un Doppler físico real (la "cámara" viaja con el avión), pero da la
+   sensación de aceleración/desaceleración: el tono sube con la velocidad. */
+let engineNode = null;
+function startEngine(){
+  if(AUDIO_MUTED) return;
+  stopEngine();
+  try{
+    const ac = getAudioCtx();
+    const osc = ac.createOscillator(); osc.type='sawtooth'; osc.frequency.value=85;
+    const osc2 = ac.createOscillator(); osc2.type='square'; osc2.frequency.value=43;
+    const filter = ac.createBiquadFilter(); filter.type='lowpass'; filter.frequency.value=420;
+    const gain = ac.createGain(); gain.gain.value=0.022;
+    osc.connect(filter); osc2.connect(filter); filter.connect(gain).connect(ac.destination);
+    osc.start(); osc2.start();
+    engineNode = { osc, osc2, gain, filter };
+  }catch(e){ /* sin motor si el navegador no lo soporta */ }
+}
+function updateEngineFreq(speedFactor){
+  if(!engineNode) return;
+  try{
+    const ac = getAudioCtx();
+    const f = 78 + clamp(speedFactor,0,1)*95;
+    engineNode.osc.frequency.setTargetAtTime(f, ac.currentTime, 0.09);
+    engineNode.osc2.frequency.setTargetAtTime(f*0.5, ac.currentTime, 0.09);
+  }catch(e){}
+}
+function stopEngine(){
+  if(!engineNode) return;
+  try{ engineNode.osc.stop(); engineNode.osc2.stop(); }catch(e){}
+  engineNode = null;
+}
 
 
 /* ------------------------------ Guardado --------------------------------- */
@@ -210,10 +305,10 @@ function openBriefing(mode){
     <div id="instructions" style="font-family:var(--font-hud); font-size:12.5px; line-height:1.7; color:var(--paper-dim); max-width:760px; white-space:pre-line;"></div>
   </div>`;
   const instrText = {
-    canonero: `CONTROLES — ↑/↓ ajusta el ÁNGULO · ←/→ ajusta la POTENCIA (o el CARRIL si usas torpedo)\n1 = MISIL   2 = TORPEDO   ESPACIO = DISPARAR\nEl misil traza una parábola: calcula ángulo y potencia para adelantarte al barco en movimiento.\nEl torpedo viaja recto por el carril seleccionado a la altura del barco.\nCada disparo fallido eleva el nivel de DETECCIÓN. Si llega al máximo, el enemigo contraataca.\nHunde los barcos requeridos antes de quedarte sin munición.`,
+    canonero: `CONTROLES — ↑/↓ ajusta el ÁNGULO · ←/→ ajusta la POTENCIA (o el CARRIL si usas torpedo)\n1 = MISIL   2 = TORPEDO   ESPACIO = DISPARAR\nEl misil traza una parábola: calcula ángulo y potencia para adelantarte al barco en movimiento. La mira punteada te muestra exactamente dónde caerá.\nHay VIENTO en cada nivel que desvía el misil en pleno vuelo (más cuanto más lejos dispares) — el torpedo, al ir bajo el agua, no le afecta.\nEl torpedo viaja recto por el carril seleccionado a la altura del barco.\nCada disparo fallido eleva el nivel de DETECCIÓN. Si llega al máximo, el enemigo contraataca.\nHunde los barcos requeridos antes de quedarte sin munición.`,
     kamikaze: `CONTROLES — FLECHAS / WASD mueve el avión en las 4 direcciones\nEsquiva el fuego antiaéreo (puntos rojos) de las escoltas Y del propio portaaviones, que dispara de forma constante.\nCuidado con los MISILES GUIADOS (más grandes, con estela): te persiguen girando hacia ti, no vuelan en línea recta. Rómpeles la puntería con giros bruscos.\nTu casco resiste varios impactos, marcados en la barra de integridad. Tu avión deja una estela de humo que se oscurece cuanto más dañado estás.\nColisiona con el retículo del portaaviones antes de quedarte sin casco o sin tiempo.`,
     antiaereo: `CONTROLES — FLECHAS / A·D mueve la torreta   ESPACIO / CLIC dispara\nDerriba a los aviones enemigos antes de que alcancen el portaaviones.\nLos aviones ya NO vuelan en línea recta: detectan tus disparos que se acercan y esquivan hacia un lado para evitarlos. Anticípate a su maniobra.\nCada avión que llega hasta el barco reduce su integridad. Protege el portaaviones durante todas las oleadas.`,
-    mensajero: `CONTROLES — ↑/↓ controla la ALTITUD del avión   ESPACIO suelta el mensaje\nTu avión vuela SIEMPRE hacia adelante sin detenerse; solo controlas su altura y el momento de soltar.\nHay una ALTITUD MÍNIMA SEGURA (línea punteada): si vuelas por debajo de ella cerca de una patrulla enemiga, te dispararán misiles.\nCada mensaje cae en parábola según tu altitud y velocidad. Bajar te da más precisión, pero te expone a los misiles — equilibra riesgo y puntería.\nSi el mensaje cae cerca de una patrulla, también es interceptado. Al llegar al borde derecho, el avión reinicia la pasada por la izquierda.\nEntrega todos los mensajes requeridos con la munición disponible.`,
+    mensajero: `CONTROLES — ↑/↓ controla la ALTITUD del avión   ESPACIO suelta el mensaje\nTu avión vuela SIEMPRE hacia adelante sin detenerse; solo controlas su altura y el momento de soltar.\nHay una ALTITUD MÍNIMA SEGURA (línea punteada): si vuelas por debajo de ella cerca de una patrulla enemiga, te dispararán misiles.\nCada mensaje cae en parábola según tu altitud y velocidad, y el VIENTO del nivel lo desvía mientras cae — compensa apuntando un poco antes o después según su dirección.\nBajar te da más precisión, pero te expone a los misiles — equilibra riesgo y puntería.\nSi el mensaje cae cerca de una patrulla, también es interceptado. Al llegar al borde derecho, el avión reinicia la pasada por la izquierda.\nEntrega todos los mensajes requeridos con la munición disponible.`,
   };
   $('#instructions').textContent = instrText[mode];
   $('#btn-back').addEventListener('click', ()=>{ SFX.select(); showScreen('menu'); renderMenu(); });
@@ -285,6 +380,13 @@ const Engine = {
   running:false, paused:false, activeMode:null, lastT:0, mode:null, level:1,
 };
 
+const RADIO_START_LINES = {
+  canonero: 'Cañonero listo. Localice y hunda a la flota enemiga.',
+  kamikaze: 'Escuadrón kamikaze, despegue autorizado.',
+  antiaereo: 'Baterías antiaéreas, defiendan el portaaviones.',
+  mensajero: 'Piloto mensajero, entregue las órdenes con discreción.',
+};
+const ENGINE_MODES = ['kamikaze','mensajero'];
 function startGame(mode, level){
   currentMode = mode; currentLevel = level;
   showScreen('game');
@@ -296,27 +398,39 @@ function startGame(mode, level){
   Engine.running = true;
   Engine.lastT = performance.now();
   setupToolbar();
+  startAmbient();
+  if(ENGINE_MODES.includes(mode)) startEngine();
+  radioSay(RADIO_START_LINES[mode] || '');
   requestAnimationFrame(loop);
 }
 function endGame(result){
   Engine.running = false;
+  stopEngine();
   const stars = result.stars||0;
   if(result.win) reportResult(currentMode, currentLevel, stars, result.score||0);
+  radioSay(result.win ? 'Misión cumplida.' : 'Misión fracasada.');
   renderResult({ mode:currentMode, level:currentLevel, win:result.win, stars, score:result.score||0, message:result.message||'' });
 }
-/* Barra de controles siempre visible durante la partida: pausar/reanudar y salir.
+/* Barra de controles siempre visible durante la partida: pausar/reanudar, silenciar y salir.
    Se crea una sola vez y se reinicia visualmente al empezar cada misión. */
 function setupToolbar(){
   const tb = $('#game-toolbar');
   tb.innerHTML = `
+    <button id="tb-mute" class="btn" style="padding:6px 10px; font-size:12px;">${AUDIO_MUTED?'🔇':'🔊'}</button>
     <button id="tb-pause" class="btn" style="padding:6px 12px; font-size:12px;">⏸ PAUSA</button>
     <button id="tb-exit" class="btn danger" style="padding:6px 12px; font-size:12px;">✕ SALIR</button>
   `;
+  $('#tb-mute').addEventListener('click', ()=>{
+    setMuted(!AUDIO_MUTED);
+    $('#tb-mute').textContent = AUDIO_MUTED?'🔇':'🔊';
+    if(!AUDIO_MUTED && Engine.running){ startAmbient(); if(ENGINE_MODES.includes(currentMode)) startEngine(); }
+  });
   $('#tb-pause').addEventListener('click', ()=>{ if(Engine.running) togglePause(); });
   $('#tb-exit').addEventListener('click', ()=> requestExit());
 }
 function exitToMenuNow(){
   Engine.running = false; Engine.paused = false;
+  stopAmbient(); stopEngine();
   $('#pause-overlay').classList.add('hidden');
   showScreen('menu'); renderMenu();
 }
@@ -351,6 +465,18 @@ function loop(t){
   Engine.lastT = t;
   if(!Engine.paused){
     Engine.activeMode.update(dt);
+    // aviso de radio por daños críticos (una sola vez por misión)
+    if(Engine.running && typeof Engine.activeMode.getHealthFraction === 'function'){
+      const hf = Engine.activeMode.getHealthFraction();
+      if(hf!==null && hf<=0.34 && !Engine.activeMode._radioWarned){
+        Engine.activeMode._radioWarned = true;
+        radioSay('Alerta, daños críticos.');
+      }
+    }
+    // tono de motor según la velocidad del avión, en los modos que vuelan
+    if(Engine.running && typeof Engine.activeMode.getSpeedFraction === 'function'){
+      updateEngineFreq(Engine.activeMode.getSpeedFraction());
+    }
   }
   ctx.clearRect(0,0,W,H);
   Engine.activeMode.draw(ctx);
@@ -420,8 +546,25 @@ function drawShip(ctx, x, y, scale=1, hue='#7a8a94', dmg=0){
   // pequeño cañón de cubierta a proa
   ctx.fillStyle='#232c34';
   ctx.fillRect(28,-6,7,4);
+  // estela de espuma en la popa (da sensación de barco en movimiento)
+  ctx.strokeStyle='rgba(220,240,245,0.28)'; ctx.lineWidth=1.6;
+  ctx.beginPath();
+  ctx.moveTo(-40,5); ctx.quadraticCurveTo(-62,10,-84,19);
+  ctx.moveTo(-40,7); ctx.quadraticCurveTo(-60,3,-80,-4);
+  ctx.stroke();
   if(dmg>0){ ctx.fillStyle=`rgba(255,90,50,${0.15+dmg*0.25})`; ctx.beginPath(); ctx.arc(0,-6,30,0,Math.PI*2); ctx.fill(); }
   ctx.restore();
+}
+
+/* Sombra proyectada de un avión sobre el mar/cubierta: se hace más grande y
+   opaca cuanto más bajo vuela, y más pequeña y tenue cuanto más alto —
+   ancla visualmente la sensación de altitud. */
+function drawFlightShadow(ctx, x, groundY, heightAbove, maxHeight){
+  const t = clamp(heightAbove/Math.max(1,maxHeight), 0, 1);
+  const w = lerp(28, 9, t);
+  const alpha = lerp(0.24, 0.04, t);
+  ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+  ctx.beginPath(); ctx.ellipse(x, groundY, w, w*0.3, 0, 0, Math.PI*2); ctx.fill();
 }
 
 /* Portaaviones visto de perfil (objetivo de Kamikaze) — cubierta de vuelo
@@ -459,6 +602,12 @@ function drawCarrierSide(ctx, x, y, scale=1, hue='#8a7a68'){
   drawPlane(ctx,-52,-8,0.05,0.55,'rgba(205,205,200,0.55)');
   drawPlane(ctx,-22,-8,-0.08,0.55,'rgba(205,205,200,0.55)');
   drawPlane(ctx,8,-8,0.1,0.55,'rgba(205,205,200,0.55)');
+  // estela de espuma en la popa
+  ctx.strokeStyle='rgba(220,240,245,0.24)'; ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(-88,16); ctx.quadraticCurveTo(-130,26,-172,42);
+  ctx.moveTo(-88,20); ctx.quadraticCurveTo(-126,14,-166,4);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -589,10 +738,12 @@ class CanoneroMode{
     this.lanes = [ {y:330, scale:0.55, name:'LEJANO'}, {y:410, scale:0.78, name:'MEDIO'}, {y:500, scale:1.05, name:'CERCANO'} ];
     this.gunX = 70; this.gunY = 560;
     this.angle = 35; this.power = 60; this.lane = 1; this.weapon = 'missile';
-    this.ships = []; this.projectiles = []; this.particles = [];
+    this.ships = []; this.projectiles = []; this.particles = []; this.wrecks = [];
     this.spawnTimer = 0.6; this.fireCooldown = 0;
     this.kills = 0; this.shotsUsed = 0; this.detection = 0;
     this.lives = 3; this.t = 0; this.flashTimer = 0; this.message='';
+    // viento del nivel: desvía el misil (no el torpedo, que va bajo el agua)
+    this.wind = rand(-1,1) * (9 + this.level*3.5);
     this.ended = false;
   }
   spawnShip(){
@@ -614,7 +765,10 @@ class CanoneroMode{
     return 0;                          // ángulo alto, disparo largo -> carril lejano
   }
   aimedTargetX(){
-    return this.gunX + lerp(150, 640, (this.power-25)/75);
+    const base = this.gunX + lerp(150, 640, (this.power-25)/75);
+    const flight = this.missileFlightTime(base);
+    // el viento desvía el misil en vuelo, proporcional a cuánto tiempo pasa en el aire
+    return clamp(base + this.wind*flight, this.gunX+60, W-10);
   }
   missileFlightTime(targetX){
     return clamp((targetX-this.gunX)/430, 0.5, 1.85);
@@ -696,6 +850,18 @@ class CanoneroMode{
     this.particles.forEach(pt=> pt.t += dt);
     this.particles = this.particles.filter(pt=> pt.t < pt.dur);
 
+    // hundimiento progresivo: los barcos hundidos siguen ardiendo y bajando
+    // durante un par de segundos antes de desaparecer del todo
+    this.wrecks.forEach(w=>{
+      w.t += dt;
+      w.smokeT -= dt;
+      if(w.smokeT<=0){
+        w.smokeT = 0.11;
+        this.particles.push({x:w.x+rand(-10,10), y:w.y-14-w.t*14, t:0, dur:1.0, smoke:true});
+      }
+    });
+    this.wrecks = this.wrecks.filter(w=> w.t < w.dur);
+
     if(this.detection >= 100){
       this.detection = 45; this.lives -= this.cfg.counterDamage; this.flashTimer = 0.4;
       SFX.detect();
@@ -710,6 +876,8 @@ class CanoneroMode{
     ship.dead = true; this.kills++; SFX.explosion();
     this.particles.push({x:ship.x, y:ship.y-6, t:0, dur:0.6, boom:true});
     this.ships = this.ships.filter(s=>s!==ship);
+    // el casco queda ardiendo y hundiéndose progresivamente en vez de desaparecer al instante
+    this.wrecks.push({ x:ship.x, y:ship.y, scale:ship.scale, hue:ship.hue, t:0, dur:2.4, smokeT:0.1 });
   }
   finish(win, msg){
     if(this.ended) return; this.ended = true;
@@ -736,11 +904,22 @@ class CanoneroMode{
       ctx.setLineDash([]);
     });
 
+    // restos hundiéndose: se inclinan, se hunden y arden antes de desaparecer del todo
+    this.wrecks.forEach(w=>{
+      const p = w.t/w.dur;
+      ctx.save();
+      ctx.globalAlpha = 1-p;
+      ctx.translate(w.x, w.y + lerp(0,26,p));
+      ctx.rotate(lerp(0,0.55,Math.min(p*2,1)));
+      drawShip(ctx, 0,0, w.scale, w.hue, 0.75);
+      ctx.restore();
+    });
     this.ships.forEach(s=> drawShip(ctx, s.x, s.y, s.scale, s.hue));
     this.particles.forEach(pt=>{
       const p = pt.t/pt.dur;
       if(pt.boom) drawExplosion(ctx, pt.x, pt.y, p, 1.1);
       if(pt.splash){ ctx.strokeStyle=`rgba(200,230,240,${1-p})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(pt.x,pt.y,10+p*22,0,Math.PI*2); ctx.stroke(); }
+      if(pt.smoke){ ctx.fillStyle=`rgba(35,35,35,${(1-p)*0.5})`; ctx.beginPath(); ctx.arc(pt.x,pt.y,4+p*14,0,Math.PI*2); ctx.fill(); }
     });
 
     // cañón
@@ -806,7 +985,8 @@ class CanoneroMode{
     hudText(`NIVEL ${this.level}`, 16, 30, 11, '#9c9782');
     hudText(`HUNDIDOS ${this.kills}/${this.cfg.targetKills}`, W-16, 12, 13, '#e9e3d0', 'right');
     hudText(`MUNICIÓN ${this.cfg.maxShots-this.shotsUsed}`, W-16, 30, 12, '#e9e3d0', 'right');
-    for(let i=0;i<3;i++){ ctx.fillStyle = i<this.lives ? '#39e07a' : 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(W-16-i*18,52,5,0,Math.PI*2); ctx.fill(); }
+    hudText(`VIENTO ${this.wind>=0?'→':'←'} ${Math.abs(this.wind).toFixed(0)} (afecta al misil)`, W-16, 48, 10, '#7fd7e0', 'right');
+    for(let i=0;i<3;i++){ ctx.fillStyle = i<this.lives ? '#39e07a' : 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(W-16-i*18,68,5,0,Math.PI*2); ctx.fill(); }
 
     hudText('DETECCIÓN', 16, H-58, 11, '#f0a830');
     hudGauge(16, H-42, 200, 12, this.detection/100, this.detection>70?'#d1462f':'#f0a830');
@@ -822,6 +1002,7 @@ class CanoneroMode{
 
     hudText('↑↓ ÁNGULO/CARRIL · ←→ POTENCIA · 1/2 ARMA · ESPACIO DISPARAR · MIRA PUNTEADA = DÓNDE CAERÁ', W/2, H-16, 10, '#6a7580', 'center');
   }
+  getHealthFraction(){ return this.lives/3; }
   onKeyUp(){}
 }
 
@@ -1029,6 +1210,7 @@ class KamikazeMode{
       ctx.restore();
     });
 
+    drawFlightShadow(ctx, this.plane.x, this.seaY, this.seaY-this.plane.y, this.seaY-60);
     drawPlane(ctx, this.plane.x, this.plane.y, this.plane.vx===0&&this.plane.vy===0?0:Math.atan2(this.plane.vy,this.plane.vx||60), 1.3, '#e0d0b0');
 
     this.particles.forEach(p=> drawExplosion(ctx,p.x,p.y,p.t/p.dur, p.small?0.4:1));
@@ -1044,6 +1226,8 @@ class KamikazeMode{
     hudGauge(16, H-26, 200, 12, this.hp/this.cfg.hp, '#d1462f');
     hudText('FLECHAS/WASD MUEVEN · IMPACTA CONTRA EL RETÍCULO ROJO', W/2, H-16, 10, '#6a7580', 'center');
   }
+  getHealthFraction(){ return this.hp/this.cfg.hp; }
+  getSpeedFraction(){ return clamp(Math.hypot(this.plane.vx,this.plane.vy)/220, 0, 1); }
 }
 
 /* ==========================================================================
@@ -1184,7 +1368,10 @@ class AntiaereoMode{
     // portaaviones defendido, visto en planta (los aviones caen verticalmente sobre él)
     drawCarrierTop(ctx, W/2, H-48, 320, '#5c6a72');
 
-    this.planes.forEach(p=> drawPlane(ctx, p.x, p.y, Math.PI/2, 1.35, '#c9463a'));
+    this.planes.forEach(p=>{
+      drawFlightShadow(ctx, p.x, H-52, (H-52)-p.y, H-52+40);
+      drawPlane(ctx, p.x, p.y, Math.PI/2, 1.35, '#c9463a');
+    });
     this.bullets.forEach(b=>{ ctx.fillStyle='#f0d080'; ctx.beginPath(); ctx.arc(b.x,b.y,3,0,Math.PI*2); ctx.fill(); });
     this.particles.forEach(p=> drawExplosion(ctx,p.x,p.y,p.t/p.dur,0.8));
 
@@ -1202,6 +1389,7 @@ class AntiaereoMode{
     hudGauge(16, H-26, 200, 12, this.carrierHP/this.cfg.carrierHP, '#39e07a');
     hudText('APUNTA CON EL MOUSE O ←→ · ESPACIO/CLIC DISPARA', W/2, H-16, 10, '#6a7580', 'center');
   }
+  getHealthFraction(){ return this.carrierHP/this.cfg.carrierHP; }
   onKeyUp(){}
 }
 
@@ -1230,6 +1418,9 @@ class MensajeroMode{
     this.pods = []; this.particles = []; this.patrols = []; this.missiles = [];
     this.podsLeft = this.cfg.pods; this.delivered = 0; this.lives = 3;
     this.t = 0; this.ended = false; this.flash = 0;
+    // viento del nivel: el avión (con instrumentos) vuela recto, pero el mensaje
+    // en caída libre sí se desvía — hay que compensar al soltarlo
+    this.wind = rand(-1,1) * (12 + this.level*2.5);
     this.spawnZone();
     this.patrols = Array.from({length:this.cfg.patrols},()=>({
       x: rand(200,W-100), y: H-70, dir: choice([-1,1]), speed: rand(30,60), missileCool: rand(0.3,1.4),
@@ -1287,6 +1478,8 @@ class MensajeroMode{
 
     this.pods.forEach(pod=>{
       pod.vy += 300*dt;
+      // el viento desvía el mensaje mientras cae — el avión vuela recto, pero la carga no
+      pod.vx += this.wind*dt;
       pod.x += pod.vx*dt; pod.y += pod.vy*dt;
     });
     this.pods = this.pods.filter(pod=>{
@@ -1358,6 +1551,7 @@ class MensajeroMode{
     // estela de motor para reforzar la sensación de vuelo continuo hacia adelante
     ctx.strokeStyle='rgba(230,220,200,0.18)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.moveTo(this.plane.x-34, this.plane.y); ctx.lineTo(this.plane.x-14, this.plane.y); ctx.stroke();
+    drawFlightShadow(ctx, this.plane.x, this.seaY, this.seaY-this.plane.y, this.seaY-60);
     drawPlane(ctx, this.plane.x, this.plane.y, Math.atan2(this.plane.vy, this.cfg.forwardSpeed), 1.3, '#d8cdb0');
 
     this.pods.forEach(pod=>{
@@ -1378,10 +1572,13 @@ class MensajeroMode{
     hudText(`NIVEL ${this.level}`, 16, 30, 11, '#9c9782');
     hudText(`ENTREGAS ${this.delivered}/${this.cfg.deliveries}`, W-16, 12, 13, '#e9e3d0', 'right');
     hudText(`MENSAJES ${this.podsLeft}`, W-16, 30, 12, '#e9e3d0', 'right');
-    for(let i=0;i<3;i++){ ctx.fillStyle = i<this.lives ? '#39e07a' : 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(W-16-i*18,52,5,0,Math.PI*2); ctx.fill(); }
-    if(lowAltitude) hudText('¡ZONA DE PELIGRO — MISILES DE PATRULLA!', W-16, 66, 11, '#d1462f', 'right');
+    hudText(`VIENTO ${this.wind>=0?'→':'←'} ${Math.abs(this.wind).toFixed(0)} (desvía la carga al caer)`, W-16, 48, 10, '#7fd7e0', 'right');
+    for(let i=0;i<3;i++){ ctx.fillStyle = i<this.lives ? '#39e07a' : 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(W-16-i*18,68,5,0,Math.PI*2); ctx.fill(); }
+    if(lowAltitude) hudText('¡ZONA DE PELIGRO — MISILES DE PATRULLA!', W-16, 82, 11, '#d1462f', 'right');
     hudText('↑↓ ALTITUD · ESPACIO SUELTA EL MENSAJE · MANTENTE SOBRE LA LÍNEA SEGURA', W/2, H-16, 10, '#6a7580', 'center');
   }
+  getHealthFraction(){ return this.lives/3; }
+  getSpeedFraction(){ return 0.55; }
   onKeyUp(){}
 }
 
