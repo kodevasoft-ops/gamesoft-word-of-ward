@@ -153,11 +153,21 @@ const MODE_META = {
     desc:'Vuela bajo y entrega los mensajes en zona amiga sin que caigan en manos enemigas.' },
 };
 
+const ACHIEVEMENTS = [
+  { id:'precision',  title:'Francotirador',        desc:'Completa un nivel de Cañonero sin fallar un solo disparo.',                 icon:'🎯' },
+  { id:'intacto',     title:'As Intacto',            desc:'Completa un nivel de Kamikaze sin perder nada de integridad.',              icon:'✈️' },
+  { id:'muralla',     title:'Muralla de Acero',      desc:'Completa un nivel de Antiaéreo sin que el portaaviones pierda vida.',       icon:'🛡️' },
+  { id:'impecable',   title:'Correo Impecable',      desc:'Completa un nivel de Mensajero sin perder ninguna vida.',                   icon:'✉️' },
+  { id:'comandante',  title:'Comandante Supremo',    desc:'Consigue 3 estrellas en los 24 niveles de los 4 modos.',                    icon:'🎖️' },
+  { id:'veterano',    title:'Veterano del Pacífico', desc:'Completa al menos una vez los 24 niveles.',                                 icon:'🏅' },
+];
+
 function defaultSave(){
   const s = {};
   MODES.forEach(m=>{
     s[m] = { unlocked:1, stars:{}, best:{} };
   });
+  s.achievements = {};
   return s;
 }
 let SAVE = loadSave();
@@ -168,6 +178,7 @@ function loadSave(){
     const parsed = JSON.parse(raw);
     const d = defaultSave();
     MODES.forEach(m=>{ if(parsed[m]) d[m] = Object.assign(d[m], parsed[m]); });
+    if(parsed.achievements) d.achievements = Object.assign(d.achievements, parsed.achievements);
     return d;
   }catch(e){ return defaultSave(); }
 }
@@ -180,6 +191,28 @@ function reportResult(mode, level, stars, score){
   if(score > (m.best[level]||0)) m.best[level] = score;
   if(stars>0 && level >= m.unlocked && m.unlocked <= LEVELS_PER_MODE) m.unlocked = Math.min(LEVELS_PER_MODE, level+1);
   persistSave();
+}
+/* Devuelve true si el logro era nuevo (no lo tenía ya desbloqueado). */
+function unlockAchievement(id){
+  if(!SAVE.achievements) SAVE.achievements = {};
+  if(SAVE.achievements[id]) return false;
+  SAVE.achievements[id] = true;
+  persistSave();
+  return true;
+}
+/* Revisa los logros "de conjunto" (que dependen de todo el progreso, no de
+   una sola misión) y añade los recién desbloqueados a la lista dada. */
+function checkMetaAchievements(newlyUnlocked){
+  let allThreeStars = true, allCompleted = true;
+  MODES.forEach(m=>{
+    for(let lv=1; lv<=LEVELS_PER_MODE; lv++){
+      const s = SAVE[m].stars[lv] || 0;
+      if(s<3) allThreeStars = false;
+      if(s<1) allCompleted = false;
+    }
+  });
+  if(allThreeStars && unlockAchievement('comandante')) newlyUnlocked.push('comandante');
+  if(allCompleted && unlockAchievement('veterano')) newlyUnlocked.push('veterano');
 }
 
 /* --------------------------------- UI ------------------------------------ */
@@ -214,7 +247,7 @@ function starRow(n, total=3){
 function renderMenu(){
   const totalStars = MODES.reduce((acc,m)=> acc + Object.values(SAVE[m].stars).reduce((a,b)=>a+b,0), 0);
   screens.menu.innerHTML = `
-  <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative; padding:24px; gap:6px;">
+  <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative; padding:24px; gap:6px; overflow-y:auto;">
     <div class="label-eyebrow" style="margin-bottom:6px;">CUARTEL GENERAL — TEATRO DEL PACÍFICO, 1944</div>
     <h1 style="font-family:var(--font-display); font-weight:700; font-size:clamp(28px,5vw,52px); letter-spacing:0.04em; margin:0; color:var(--paper); text-transform:uppercase; text-shadow:0 0 30px rgba(57,224,122,0.15);">
       Operación <span style="color:var(--radar);">Tifón</span>
@@ -245,6 +278,17 @@ function renderMenu(){
         </button>`;
       }).join('')}
       <div style="position:absolute; left:50%; top:50%; width:8px; height:8px; margin:-4px; border-radius:50%; background:var(--radar); box-shadow:0 0 12px var(--radar);"></div>
+    </div>
+
+    <div class="label-eyebrow" style="margin-bottom:2px;">CONDECORACIONES</div>
+    <div style="display:flex; gap:16px; flex-wrap:wrap; justify-content:center; max-width:600px; margin-bottom:16px;">
+      ${ACHIEVEMENTS.map(a=>{
+        const unlocked = !!SAVE.achievements[a.id];
+        return `<div title="${a.desc}" style="display:flex; flex-direction:column; align-items:center; gap:4px; width:76px; opacity:${unlocked?1:0.3};">
+          <span style="font-size:22px; filter:${unlocked?'none':'grayscale(1)'};">${a.icon}</span>
+          <span style="font-family:var(--font-hud); font-size:8px; text-align:center; letter-spacing:0.03em; color:${unlocked?'var(--amber)':'var(--paper-dim)'};">${a.title}</span>
+        </div>`;
+      }).join('')}
     </div>
 
     <div style="display:flex; gap:12px; flex-wrap:wrap; justify-content:center;">
@@ -322,9 +366,10 @@ function openBriefing(mode){
   showScreen('briefing');
 }
 
-function renderResult({mode, level, win, stars, score, message}){
+function renderResult({mode, level, win, stars, score, message, achievements}){
   const meta = MODE_META[mode];
   const hasNext = level < LEVELS_PER_MODE;
+  const unlocked = (achievements||[]).map(id=> ACHIEVEMENTS.find(a=>a.id===id)).filter(Boolean);
   screens.result.innerHTML = `
   <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px;">
     <div class="label-eyebrow" style="color:${win?'var(--radar)':'var(--rust)'};">${win?'MISIÓN CUMPLIDA':'MISIÓN FALLIDA'}</div>
@@ -332,12 +377,17 @@ function renderResult({mode, level, win, stars, score, message}){
     <div style="font-family:var(--font-hud); color:var(--paper-dim); max-width:560px; text-align:center;">${message}</div>
     ${win?`<div style="font-size:26px; margin-top:6px;">${starRow(stars)}</div>`:''}
     <div style="font-family:var(--font-hud); font-size:14px; color:var(--amber); margin-top:2px;">PUNTUACIÓN: ${score}</div>
+    ${unlocked.length ? `<div style="margin-top:8px; padding:12px 20px; border:1px solid var(--amber); background:rgba(240,168,48,0.08); display:flex; flex-direction:column; gap:6px; align-items:center; animation:popin .35s ease;">
+      <div class="label-eyebrow" style="color:var(--amber);">NUEVO RECONOCIMIENTO</div>
+      ${unlocked.map(a=>`<div style="font-family:var(--font-display); font-size:15px; display:flex; gap:8px; align-items:center;"><span style="font-size:20px;">${a.icon}</span> ${a.title}</div>`).join('')}
+    </div>` : ''}
     <div style="display:flex; gap:12px; margin-top:18px; flex-wrap:wrap; justify-content:center;">
       <button class="btn" id="btn-retry">REINTENTAR</button>
       ${win && hasNext ? '<button class="btn primary" id="btn-next">SIGUIENTE NIVEL</button>' : ''}
       <button class="btn" id="btn-menu">MAPA DE MISIONES</button>
     </div>
-  </div>`;
+  </div>
+  <style>@keyframes popin{from{transform:scale(0.85); opacity:0;} to{transform:scale(1); opacity:1;}}</style>`;
   $('#btn-retry').addEventListener('click', ()=>{ SFX.select(); startGame(mode, level); });
   $('#btn-menu').addEventListener('click', ()=>{ SFX.select(); showScreen('menu'); renderMenu(); });
   const nextBtn = $('#btn-next');
@@ -407,9 +457,14 @@ function endGame(result){
   Engine.running = false;
   stopEngine();
   const stars = result.stars||0;
-  if(result.win) reportResult(currentMode, currentLevel, stars, result.score||0);
+  const newlyUnlocked = [];
+  if(result.win){
+    reportResult(currentMode, currentLevel, stars, result.score||0);
+    if(result.achievementId && unlockAchievement(result.achievementId)) newlyUnlocked.push(result.achievementId);
+  }
+  checkMetaAchievements(newlyUnlocked);
   radioSay(result.win ? 'Misión cumplida.' : 'Misión fracasada.');
-  renderResult({ mode:currentMode, level:currentLevel, win:result.win, stars, score:result.score||0, message:result.message||'' });
+  renderResult({ mode:currentMode, level:currentLevel, win:result.win, stars, score:result.score||0, message:result.message||'', achievements:newlyUnlocked });
 }
 /* Barra de controles siempre visible durante la partida: pausar/reanudar, silenciar y salir.
    Se crea una sola vez y se reinicia visualmente al empezar cada misión. */
@@ -484,14 +539,42 @@ function loop(t){
 }
 
 /* ------------------------- Utilidades de dibujo --------------------------- */
-function drawSky(ctx, topColor, botColor, h){
+/* Paletas de cielo/mar por momento del día — variedad visual determinista
+   (nivel % 3) sin romper ninguna llamada existente: si no se pasa `phase`,
+   las funciones se comportan exactamente igual que antes. */
+const SKY_PALETTES = [
+  { name:'DÍA',       skyTop:'#3c5770', skyBottom:'#8fa8b0', seaTop:'#123a52', seaBottom:'#04141e', celestial:'sun',  color:'#fbe9b0', glow:'rgba(251,233,176,0.30)' },
+  { name:'ATARDECER', skyTop:'#3a2540', skyBottom:'#c96a3e', seaTop:'#5a2e2a', seaBottom:'#160f14', celestial:'sun',  color:'#ffab5e', glow:'rgba(255,150,70,0.38)' },
+  { name:'NOCHE',     skyTop:'#040810', skyBottom:'#101c2a', seaTop:'#061826', seaBottom:'#020a12', celestial:'moon', color:'#d8e2ea', glow:'rgba(180,200,220,0.22)' },
+];
+function drawSky(ctx, topColor, botColor, h, phase){
+  let top=topColor, bottom=botColor, pal=null;
+  if(phase!=null){ pal = SKY_PALETTES[((phase%3)+3)%3]; top=pal.skyTop; bottom=pal.skyBottom; }
   const g = ctx.createLinearGradient(0,0,0,h);
-  g.addColorStop(0, topColor); g.addColorStop(1, botColor);
+  g.addColorStop(0, top); g.addColorStop(1, bottom);
   ctx.fillStyle = g; ctx.fillRect(0,0,W,h);
+  if(pal){
+    if(pal.celestial==='moon'){
+      for(let i=0;i<26;i++){
+        const sx=(i*137.5)%W, sy=(i*57)%(h*0.75)+6;
+        ctx.globalAlpha = 0.3+((i*13)%40)/100;
+        ctx.fillStyle='rgba(255,255,255,0.9)';
+        ctx.fillRect(sx,sy,1.4,1.4);
+      }
+      ctx.globalAlpha=1;
+    }
+    const cx = W*0.82, cy = h*0.22, r = pal.celestial==='sun'?22:16;
+    const glow = ctx.createRadialGradient(cx,cy,0,cx,cy,r*3.2);
+    glow.addColorStop(0, pal.glow); glow.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(cx,cy,r*3.2,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=pal.color; ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+  }
 }
-function drawSea(ctx, y0, y1, t){
+function drawSea(ctx, y0, y1, t, phase){
+  let top='#0c3049', bottom='#031420';
+  if(phase!=null){ const pal = SKY_PALETTES[((phase%3)+3)%3]; top=pal.seaTop; bottom=pal.seaBottom; }
   const g = ctx.createLinearGradient(0,y0,0,y1);
-  g.addColorStop(0,'#0c3049'); g.addColorStop(1,'#031420');
+  g.addColorStop(0,top); g.addColorStop(1,bottom);
   ctx.fillStyle = g; ctx.fillRect(0,y0,W,y1-y0);
   ctx.strokeStyle = 'rgba(120,190,210,0.10)'; ctx.lineWidth=1;
   for(let i=0;i<14;i++){
@@ -508,8 +591,8 @@ function drawSea(ctx, y0, y1, t){
 /* Buque de guerra visto de perfil (para cañonero y escoltas de kamikaze).
    Siempre se dibuja apoyado sobre su propia línea de flotación: el (x,y)
    que recibe ES la línea del agua, nunca "flota" por encima de ella. */
-function drawShip(ctx, x, y, scale=1, hue='#7a8a94', dmg=0){
-  ctx.save(); ctx.translate(x,y); ctx.scale(scale,scale);
+function drawShip(ctx, x, y, scale=1, hue='#7a8a94', dmg=0, rock=0){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(rock); ctx.scale(scale,scale);
   // estela / reflejo en el agua
   ctx.fillStyle='rgba(210,235,240,0.10)';
   ctx.beginPath(); ctx.ellipse(2,7,50,5,0,0,Math.PI*2); ctx.fill();
@@ -567,10 +650,33 @@ function drawFlightShadow(ctx, x, groundY, heightAbove, maxHeight){
   ctx.beginPath(); ctx.ellipse(x, groundY, w, w*0.3, 0, 0, Math.PI*2); ctx.fill();
 }
 
+/* Resplandor cálido de una explosión reflejado sobre el agua, achatado como
+   un reflejo real en la superficie (no un círculo perfecto). */
+function drawWaterGlow(ctx, x, y, rx, alpha){
+  const ry = rx*0.32;
+  const g = ctx.createRadialGradient(x,y,0,x,y,rx);
+  g.addColorStop(0, `rgba(255,205,130,${alpha})`);
+  g.addColorStop(1, 'rgba(255,205,130,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2); ctx.fill();
+}
+
+/* Fogonazo breve de disparo (cañón, torreta, batería antiaérea). */
+function drawMuzzleFlash(ctx, x, y, p){
+  const a = 1-p;
+  ctx.fillStyle = `rgba(255,235,180,${a*0.9})`;
+  ctx.beginPath(); ctx.arc(x,y,3+p*11,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle = `rgba(255,225,150,${a*0.6})`; ctx.lineWidth=1.4;
+  for(let i=0;i<4;i++){
+    const a2 = (i/4)*Math.PI*2 + p*2;
+    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+Math.cos(a2)*(6+p*10), y+Math.sin(a2)*(6+p*10)); ctx.stroke();
+  }
+}
+
 /* Portaaviones visto de perfil (objetivo de Kamikaze) — cubierta de vuelo
    larga, isla lateral y un par de aviones estacionados para dar escala. */
-function drawCarrierSide(ctx, x, y, scale=1, hue='#8a7a68'){
-  ctx.save(); ctx.translate(x,y); ctx.scale(scale,scale);
+function drawCarrierSide(ctx, x, y, scale=1, hue='#8a7a68', rock=0){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(rock); ctx.scale(scale,scale);
   ctx.fillStyle='rgba(210,235,240,0.08)';
   ctx.beginPath(); ctx.ellipse(4,28,112,7,0,0,Math.PI*2); ctx.fill();
   // casco
@@ -744,6 +850,7 @@ class CanoneroMode{
     this.lives = 3; this.t = 0; this.flashTimer = 0; this.message='';
     // viento del nivel: desvía el misil (no el torpedo, que va bajo el agua)
     this.wind = rand(-1,1) * (9 + this.level*3.5);
+    this.phase = this.level % 3; // día / atardecer / noche, según el nivel
     this.ended = false;
   }
   spawnShip(){
@@ -786,6 +893,9 @@ class CanoneroMode{
     if(this.ended || this.fireCooldown>0 || this.shotsUsed>=this.cfg.maxShots) return;
     this.fireCooldown = 0.55; this.shotsUsed++;
     SFX.fire();
+    // fogonazo en la boca del cañón, apuntando en la dirección actual
+    const rad = deg2rad(this.angle);
+    this.particles.push({ x:this.gunX+48*Math.cos(rad), y:this.gunY-48*Math.sin(rad), t:0, dur:0.09, flash:true });
     if(this.weapon==='missile'){
       const lane = this.aimedLane();
       const targetX = this.aimedTargetX();
@@ -889,11 +999,12 @@ class CanoneroMode{
       else if(accuracy>0.5 || this.lives>=2) stars=2;
     }
     const score = this.kills*250 + Math.round(accuracy*300) + this.lives*100;
-    endGame({ win, stars, score, message: msg || `Flota enemiga neutralizada: ${this.kills} bajas. Precisión ${(accuracy*100).toFixed(0)}%.` });
+    const achievementId = (win && this.shotsUsed>0 && this.kills===this.shotsUsed) ? 'precision' : null;
+    endGame({ win, stars, score, achievementId, message: msg || `Flota enemiga neutralizada: ${this.kills} bajas. Precisión ${(accuracy*100).toFixed(0)}%.` });
   }
   draw(ctx){
-    drawSky(ctx,'#0a1d2e','#123049', 300);
-    drawSea(ctx, 300, H, this.t);
+    drawSky(ctx,'#0a1d2e','#123049', 300, this.phase);
+    drawSea(ctx, 300, H, this.t, this.phase);
     // horizonte
     ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.beginPath(); ctx.moveTo(0,300); ctx.lineTo(W,300); ctx.stroke();
     // líneas guía de los tres carriles, para que se entienda el "mapa" de distancias
@@ -914,12 +1025,13 @@ class CanoneroMode{
       drawShip(ctx, 0,0, w.scale, w.hue, 0.75);
       ctx.restore();
     });
-    this.ships.forEach(s=> drawShip(ctx, s.x, s.y, s.scale, s.hue));
+    this.ships.forEach(s=> drawShip(ctx, s.x, s.y, s.scale, s.hue, 0, Math.sin(this.t*1.5+s.x*0.03)*0.028));
     this.particles.forEach(pt=>{
       const p = pt.t/pt.dur;
-      if(pt.boom) drawExplosion(ctx, pt.x, pt.y, p, 1.1);
+      if(pt.boom){ drawWaterGlow(ctx, pt.x, pt.y+16, 46*(1-p), (1-p)*0.5); drawExplosion(ctx, pt.x, pt.y, p, 1.1); }
       if(pt.splash){ ctx.strokeStyle=`rgba(200,230,240,${1-p})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(pt.x,pt.y,10+p*22,0,Math.PI*2); ctx.stroke(); }
       if(pt.smoke){ ctx.fillStyle=`rgba(35,35,35,${(1-p)*0.5})`; ctx.beginPath(); ctx.arc(pt.x,pt.y,4+p*14,0,Math.PI*2); ctx.fill(); }
+      if(pt.flash) drawMuzzleFlash(ctx, pt.x, pt.y, p);
     });
 
     // cañón
@@ -982,7 +1094,7 @@ class CanoneroMode{
 
     // ---- HUD ----
     hudText('CAÑONERO NAVAL', 16, 12, 14, '#39e07a');
-    hudText(`NIVEL ${this.level}`, 16, 30, 11, '#9c9782');
+    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name}`, 16, 30, 11, '#9c9782');
     hudText(`HUNDIDOS ${this.kills}/${this.cfg.targetKills}`, W-16, 12, 13, '#e9e3d0', 'right');
     hudText(`MUNICIÓN ${this.cfg.maxShots-this.shotsUsed}`, W-16, 30, 12, '#e9e3d0', 'right');
     hudText(`VIENTO ${this.wind>=0?'→':'←'} ${Math.abs(this.wind).toFixed(0)} (afecta al misil)`, W-16, 48, 10, '#7fd7e0', 'right');
@@ -1044,6 +1156,7 @@ class KamikazeMode{
     // el portaaviones también dispara: es un defensor más, pero fijo y constante
     this.carrierCool = 0.6;
     this.missileCool = this.cfg.missileInterval * 0.5;
+    this.phase = this.level % 3; // día / atardecer / noche
     this.smokeTimer = 0;
     this.t = 0; this.ended = false; this.shake = 0; this.hitFlash=0;
   }
@@ -1055,6 +1168,7 @@ class KamikazeMode{
     const predY = clamp(this.plane.y + this.plane.vy*leadT*0.6, 20, this.seaY-10);
     const ang = Math.atan2(predY-gunY, predX-gunX) + rand(-0.09,0.09);
     this.flak.push({ x:gunX, y:gunY, vx:Math.cos(ang)*speed, vy:Math.sin(ang)*speed, life:2.2 });
+    this.particles.push({ x:gunX, y:gunY, t:0, dur:0.07, flash:true });
   }
   update(dt){
     if(this.ended) return;
@@ -1172,23 +1286,24 @@ class KamikazeMode{
       else if(this.hp>=2 || this.timeLeft>this.cfg.timeLimit*0.15) stars=2;
     }
     const score = (win?800:0) + this.hp*150 + Math.round(this.timeLeft*8);
-    endGame({ win, stars, score, message: msg || `Impacto directo sobre el portaaviones. Casco restante: ${this.hp}/${this.cfg.hp}.` });
+    const achievementId = (win && this.hp===this.cfg.hp) ? 'intacto' : null;
+    endGame({ win, stars, score, achievementId, message: msg || `Impacto directo sobre el portaaviones. Casco restante: ${this.hp}/${this.cfg.hp}.` });
   }
   draw(ctx){
     let ox=0, oy=0;
     if(this.shake>0){ ox = rand(-1,1)*this.shake*6; oy = rand(-1,1)*this.shake*6; }
     ctx.save(); ctx.translate(ox,oy);
-    drawSky(ctx,'#1a2230','#0d1520', H);
-    drawSea(ctx, this.seaY, H, this.t);
+    drawSky(ctx,'#1a2230','#0d1520', H, this.phase);
+    drawSea(ctx, this.seaY, H, this.t, this.phase);
     ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.beginPath(); ctx.moveTo(0,this.seaY); ctx.lineTo(W,this.seaY); ctx.stroke();
 
     // portaaviones objetivo, apoyado sobre la línea del mar (nunca "flotando" en el cielo)
-    drawCarrierSide(ctx, this.cfg.targetX, this.seaY, 1.05, '#8a7060');
+    drawCarrierSide(ctx, this.cfg.targetX, this.seaY, 1.05, '#8a7060', Math.sin(this.t*1.1)*0.018);
     ctx.strokeStyle='rgba(209,70,47,0.7)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(this.cfg.targetX,this.cfg.targetY,this.cfg.targetR,0,Math.PI*2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(this.cfg.targetX-10,this.cfg.targetY); ctx.lineTo(this.cfg.targetX+10,this.cfg.targetY); ctx.moveTo(this.cfg.targetX,this.cfg.targetY-10); ctx.lineTo(this.cfg.targetX,this.cfg.targetY+10); ctx.stroke();
 
-    this.escorts.forEach(es=> drawShip(ctx, es.x, es.y, 0.8, '#5c6a72'));
+    this.escorts.forEach(es=> drawShip(ctx, es.x, es.y, 0.8, '#5c6a72', 0, Math.sin(this.t*1.6+es.x*0.04)*0.03));
 
     // humo del avión (estela) — se dibuja antes que el avión para que quede detrás
     this.smoke.forEach(s=>{
@@ -1213,13 +1328,13 @@ class KamikazeMode{
     drawFlightShadow(ctx, this.plane.x, this.seaY, this.seaY-this.plane.y, this.seaY-60);
     drawPlane(ctx, this.plane.x, this.plane.y, this.plane.vx===0&&this.plane.vy===0?0:Math.atan2(this.plane.vy,this.plane.vx||60), 1.3, '#e0d0b0');
 
-    this.particles.forEach(p=> drawExplosion(ctx,p.x,p.y,p.t/p.dur, p.small?0.4:1));
+    this.particles.forEach(p=>{ if(p.flash) drawMuzzleFlash(ctx,p.x,p.y,p.t/p.dur); else drawExplosion(ctx,p.x,p.y,p.t/p.dur, p.small?0.4:1); });
 
     if(this.hitFlash>0){ ctx.fillStyle=`rgba(200,40,20,${this.hitFlash*0.35})`; ctx.fillRect(0,0,W,H); }
     ctx.restore();
 
     hudText('ESCUADRÓN KAMIKAZE', 16, 12, 14, '#d1462f');
-    hudText(`NIVEL ${this.level}`, 16, 30, 11, '#9c9782');
+    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name}`, 16, 30, 11, '#9c9782');
     hudText(`TIEMPO ${Math.max(0,this.timeLeft).toFixed(1)}s`, W-16, 12, 13, '#e9e3d0', 'right');
     if(this.missiles.length>0) hudText('¡MISIL GUIADO EN VUELO!', W-16, 30, 11, '#f0603a', 'right');
     hudText('INTEGRIDAD', 16, H-42, 11, '#f0a830');
@@ -1250,6 +1365,7 @@ class AntiaereoMode{
     this.carrierHP = this.cfg.carrierHP;
     this.wave = 0; this.spawnedInWave = 0; this.spawnTimer = 0.4; this.waveDelay = 0;
     this.fireCd = 0; this.t = 0; this.ended = false; this.planesDowned = 0;
+    this.phase = this.level % 3; // día / atardecer / noche
     this.startNextWave();
   }
   startNextWave(){
@@ -1261,6 +1377,9 @@ class AntiaereoMode{
     if(this.fireCd>0 || this.ended) return;
     this.fireCd = this.cfg.fireCooldown; SFX.fire();
     this.bullets.push({ x:this.turretX, y:this.turretY-18, vx:Math.cos(this.aimAngle)*520, vy:Math.sin(this.aimAngle)*520 });
+    // fogonazo en la boca de la torreta, en la dirección de puntería
+    const theta = this.aimAngle + Math.PI/2;
+    this.particles.push({ x:this.turretX+40*Math.sin(theta), y:this.turretY-40*Math.cos(theta), t:0, dur:0.08, flash:true });
   }
   update(dt){
     if(this.ended) return;
@@ -1360,11 +1479,12 @@ class AntiaereoMode{
       else if(this.carrierHP>=this.cfg.carrierHP*0.6) stars=2;
     }
     const score = this.planesDowned*120 + this.carrierHP*80;
-    endGame({ win, stars, score, message: msg || `Oleadas repelidas: ${this.cfg.waves}. Aviones derribados: ${this.planesDowned}. Portaaviones al ${Math.round(this.carrierHP/this.cfg.carrierHP*100)}%.` });
+    const achievementId = (win && this.carrierHP===this.cfg.carrierHP) ? 'muralla' : null;
+    endGame({ win, stars, score, achievementId, message: msg || `Oleadas repelidas: ${this.cfg.waves}. Aviones derribados: ${this.planesDowned}. Portaaviones al ${Math.round(this.carrierHP/this.cfg.carrierHP*100)}%.` });
   }
   draw(ctx){
-    drawSky(ctx,'#152233','#0a121c', H-70);
-    drawSea(ctx, H-70, H, this.t);
+    drawSky(ctx,'#152233','#0a121c', H-70, this.phase);
+    drawSea(ctx, H-70, H, this.t, this.phase);
     // portaaviones defendido, visto en planta (los aviones caen verticalmente sobre él)
     drawCarrierTop(ctx, W/2, H-48, 320, '#5c6a72');
 
@@ -1373,7 +1493,7 @@ class AntiaereoMode{
       drawPlane(ctx, p.x, p.y, Math.PI/2, 1.35, '#c9463a');
     });
     this.bullets.forEach(b=>{ ctx.fillStyle='#f0d080'; ctx.beginPath(); ctx.arc(b.x,b.y,3,0,Math.PI*2); ctx.fill(); });
-    this.particles.forEach(p=> drawExplosion(ctx,p.x,p.y,p.t/p.dur,0.8));
+    this.particles.forEach(p=>{ if(p.flash) drawMuzzleFlash(ctx,p.x,p.y,p.t/p.dur); else drawExplosion(ctx,p.x,p.y,p.t/p.dur,0.8); });
 
     // torreta
     ctx.save(); ctx.translate(this.turretX,this.turretY);
@@ -1383,7 +1503,7 @@ class AntiaereoMode{
     ctx.restore(); ctx.restore();
 
     hudText('FUEGO ANTIAÉREO', 16, 12, 14, '#f0a830');
-    hudText(`NIVEL ${this.level} · OLEADA ${Math.min(this.wave,this.cfg.waves)}/${this.cfg.waves}`, 16, 30, 11, '#9c9782');
+    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name} · OLEADA ${Math.min(this.wave,this.cfg.waves)}/${this.cfg.waves}`, 16, 30, 11, '#9c9782');
     hudText(`DERRIBOS ${this.planesDowned}`, W-16, 12, 13, '#e9e3d0', 'right');
     hudText('PORTAAVIONES', 16, H-42, 11, '#39e07a');
     hudGauge(16, H-26, 200, 12, this.carrierHP/this.cfg.carrierHP, '#39e07a');
@@ -1421,6 +1541,7 @@ class MensajeroMode{
     // viento del nivel: el avión (con instrumentos) vuela recto, pero el mensaje
     // en caída libre sí se desvía — hay que compensar al soltarlo
     this.wind = rand(-1,1) * (12 + this.level*2.5);
+    this.phase = this.level % 3; // día / atardecer / noche
     this.spawnZone();
     this.patrols = Array.from({length:this.cfg.patrols},()=>({
       x: rand(200,W-100), y: H-70, dir: choice([-1,1]), speed: rand(30,60), missileCool: rand(0.3,1.4),
@@ -1515,11 +1636,12 @@ class MensajeroMode{
       else if(this.lives>=2) stars=2;
     }
     const score = this.delivered*300 + this.lives*100;
-    endGame({ win, stars, score, message: msg || `Entregas completadas: ${this.delivered}/${this.cfg.deliveries}. Vidas restantes: ${this.lives}.` });
+    const achievementId = (win && this.lives===3) ? 'impecable' : null;
+    endGame({ win, stars, score, achievementId, message: msg || `Entregas completadas: ${this.delivered}/${this.cfg.deliveries}. Vidas restantes: ${this.lives}.` });
   }
   draw(ctx){
-    drawSky(ctx,'#101c28','#08111a', H);
-    drawSea(ctx, this.seaY, H, this.t);
+    drawSky(ctx,'#101c28','#08111a', H, this.phase);
+    drawSea(ctx, this.seaY, H, this.t, this.phase);
 
     // línea de altitud mínima segura: por debajo de ella, las patrullas pueden dispararte
     const lowAltitude = this.plane.y > this.cfg.dangerY;
@@ -1535,7 +1657,7 @@ class MensajeroMode{
     hudText('ZONA AMIGA', this.zone.x, this.zone.y-this.zone.r-16, 10, '#39e07a','center');
 
     this.patrols.forEach(p=>{
-      drawShip(ctx, p.x, p.y, 0.6, '#8a3a30');
+      drawShip(ctx, p.x, p.y, 0.6, '#8a3a30', 0, Math.sin(this.t*1.7+p.x*0.05)*0.032);
       ctx.strokeStyle='rgba(209,70,47,0.5)'; ctx.beginPath(); ctx.arc(p.x,p.y,this.cfg.missileRange>250?26:26,0,Math.PI*2); ctx.stroke();
     });
 
@@ -1569,7 +1691,7 @@ class MensajeroMode{
     if(this.flash>0){ ctx.fillStyle=`rgba(200,40,20,${this.flash*0.3})`; ctx.fillRect(0,0,W,H); }
 
     hudText('PILOTO MENSAJERO', 16, 12, 14, '#c8cfd6');
-    hudText(`NIVEL ${this.level}`, 16, 30, 11, '#9c9782');
+    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name}`, 16, 30, 11, '#9c9782');
     hudText(`ENTREGAS ${this.delivered}/${this.cfg.deliveries}`, W-16, 12, 13, '#e9e3d0', 'right');
     hudText(`MENSAJES ${this.podsLeft}`, W-16, 30, 12, '#e9e3d0', 'right');
     hudText(`VIENTO ${this.wind>=0?'→':'←'} ${Math.abs(this.wind).toFixed(0)} (desvía la carga al caer)`, W-16, 48, 10, '#7fd7e0', 'right');
