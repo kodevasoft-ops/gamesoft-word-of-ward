@@ -153,6 +153,50 @@ const MODE_META = {
     desc:'Vuela bajo y entrega los mensajes en zona amiga sin que caigan en manos enemigas.' },
 };
 
+/* ---------------------------- Modo Campaña -------------------------------- */
+/* Narrativa ficticia que encadena los 4 roles en una sola historia: la
+   Escuadra Fénix, en la Operación Tifón, Pacífico 1944 (nombres y lugares
+   inventados). Cada capítulo usa el motor de un modo existente en un nivel
+   concreto, con texto de misión antes y después. */
+const CAMPAIGN = [
+  { mode:'canonero', level:1, title:'Capítulo 1 — El amanecer de Tifón',
+    brief:'Los radares costeros detectan siluetas en el horizonte al amanecer. La Escuadra Fénix necesita que la batería costera abra fuego antes de que la flota enemiga se acerque a la bahía.',
+    debrief:'El primer contacto ha sido repelido. Pero los informes de inteligencia hablan de una flota mucho mayor moviéndose hacia el Atolón Vela...' },
+  { mode:'antiaereo', level:1, title:'Capítulo 2 — Primera oleada',
+    brief:'Como represalia, oleadas de cazas enemigos se dirigen hacia el portaaviones Fénix. Las baterías antiaéreas son la última línea de defensa.',
+    debrief:'El cielo vuelve a estar despejado, por ahora. Pero los vigías han avistado algo peor asomando entre las nubes: aviones que no giran para volver a casa.' },
+  { mode:'kamikaze', level:1, title:'Capítulo 3 — Represalia',
+    brief:'Es momento de llevar la guerra a su origen. Un piloto de la Fénix debe abrirse paso entre el fuego enemigo y alcanzar su portaaviones.',
+    debrief:'El golpe ha dejado a la flota enemiga tambaleándose. Pero la guerra de señales apenas comienza: hay órdenes urgentes que deben llegar a la costa antes del amanecer.' },
+  { mode:'mensajero', level:1, title:'Capítulo 4 — Órdenes urgentes',
+    brief:'Sin radio segura, solo queda un mensajero volando bajo, entregando órdenes en mano antes de que caigan en manos equivocadas.',
+    debrief:'El mensaje llegó a tiempo. La Escuadra Fénix reagrupa fuerzas — pero la calma no durará: los informes hablan de una flota reconstituida acercándose al Estrecho de Tifón.' },
+  { mode:'canonero', level:3, title:'Capítulo 5 — El Estrecho de Tifón',
+    brief:'La flota enemiga, reforzada, intenta cruzar el estrecho bajo cobertura de niebla. La costa no puede permitirlo.',
+    debrief:'El estrecho vuelve a ser terreno amigo. Pero en represalia, el cielo se llena de motores enemigos.' },
+  { mode:'antiaereo', level:3, title:'Capítulo 6 — Cielos en llamas',
+    brief:'La mayor oleada aérea de la campaña hasta ahora se dirige hacia la Fénix. Cada avión derribado es un minuto más de vida para la flota.',
+    debrief:'El portaaviones resiste, maltrecho pero a flote. Es momento de devolver el golpe directamente a su origen.' },
+  { mode:'kamikaze', level:3, title:'Capítulo 7 — Objetivo: portaaviones',
+    brief:'Las defensas enemigas están en máxima alerta. Solo un piloto decidido puede atravesar la cortina de fuego y alcanzar el corazón de la flota.',
+    debrief:'El impacto se sintió hasta la costa. La flota enemiga se retira, herida — pero antes de que termine todo, alguien debe advertir a los aliados de lo que viene.' },
+  { mode:'mensajero', level:3, title:'Capítulo 8 — Comunicaciones vitales',
+    brief:'Con las líneas de radio comprometidas, la única forma segura de coordinar el golpe final es un vuelo de entrega bajo fuego enemigo.',
+    debrief:'El mensaje llega a la Escuadra Fénix: todo está listo para el asalto final al Atolón Vela.' },
+  { mode:'canonero', level:5, title:'Capítulo 9 — El cerco se cierra',
+    brief:'Lo que queda de la flota enemiga intenta romper el cerco antes de que sea demasiado tarde. No debe escapar ni un solo barco.',
+    debrief:'El cerco se mantiene. Pero el enemigo, acorralado, lanza todo lo que le queda contra el cielo.' },
+  { mode:'antiaereo', level:5, title:'Capítulo 10 — Última línea de defensa',
+    brief:'Es el ataque aéreo más desesperado de la campaña. Si el portaaviones cae ahora, todo el esfuerzo se pierde.',
+    debrief:'La Fénix resiste, apenas. El enemigo solo tiene una carta más por jugar — y es la más peligrosa de todas.' },
+  { mode:'kamikaze', level:5, title:'Capítulo 11 — La ofensiva final',
+    brief:'El enemigo lanza su ataque más desesperado. Un último piloto de la Fénix debe responder de la misma forma: sin margen de error.',
+    debrief:'El golpe final ha caído. El Atolón Vela queda en silencio. Solo falta una cosa: que el mundo se entere de que aquí, la guerra ha terminado.' },
+  { mode:'mensajero', level:6, title:'Capítulo 12 — El mensaje que termina la guerra',
+    brief:'El vuelo más importante de la campaña: entregar la noticia de la victoria antes de que la desinformación enemiga se adelante.',
+    debrief:'Operación Tifón ha concluido con éxito. La Escuadra Fénix regresa a casa. Gracias por comandar cada misión, piloto.' },
+];
+
 const ACHIEVEMENTS = [
   { id:'precision',  title:'Francotirador',        desc:'Completa un nivel de Cañonero sin fallar un solo disparo.',                 icon:'🎯' },
   { id:'intacto',     title:'As Intacto',            desc:'Completa un nivel de Kamikaze sin perder nada de integridad.',              icon:'✈️' },
@@ -168,6 +212,7 @@ function defaultSave(){
     s[m] = { unlocked:1, stars:{}, best:{} };
   });
   s.achievements = {};
+  s.campaign = { unlocked:1 };
   return s;
 }
 let SAVE = loadSave();
@@ -179,6 +224,7 @@ function loadSave(){
     const d = defaultSave();
     MODES.forEach(m=>{ if(parsed[m]) d[m] = Object.assign(d[m], parsed[m]); });
     if(parsed.achievements) d.achievements = Object.assign(d.achievements, parsed.achievements);
+    if(parsed.campaign) d.campaign = Object.assign(d.campaign, parsed.campaign);
     return d;
   }catch(e){ return defaultSave(); }
 }
@@ -220,6 +266,7 @@ const $ = sel => document.querySelector(sel);
 const screens = {
   menu: $('#screen-menu'),
   briefing: $('#screen-briefing'),
+  campaign: $('#screen-campaign'),
   game: $('#screen-game'),
   result: $('#screen-result'),
 };
@@ -252,11 +299,14 @@ function renderMenu(){
     <h1 style="font-family:var(--font-display); font-weight:700; font-size:clamp(28px,5vw,52px); letter-spacing:0.04em; margin:0; color:var(--paper); text-transform:uppercase; text-shadow:0 0 30px rgba(57,224,122,0.15);">
       Operación <span style="color:var(--radar);">Tifón</span>
     </h1>
-    <div style="font-family:var(--font-hud); font-size:12px; color:var(--paper-dim); letter-spacing:0.15em; margin-bottom:18px;">
+    <div style="font-family:var(--font-hud); font-size:12px; color:var(--paper-dim); letter-spacing:0.15em; margin-bottom:6px;">
       ESTRELLAS TOTALES: <span style="color:var(--amber);">${totalStars} / ${MODES.length*LEVELS_PER_MODE*3}</span>
     </div>
 
-    <div id="radar-wrap" style="position:relative; width:min(56vh,420px); height:min(56vh,420px); border-radius:50%; border:1px solid var(--radar-dim); background:radial-gradient(circle, rgba(57,224,122,0.05), transparent 70%); margin:10px 0 22px;">
+    <button id="btn-campaign" class="btn primary" style="padding:14px 32px; font-size:16px; margin-bottom:16px;">📖 MODO CAMPAÑA — Operación Tifón</button>
+
+    <div class="label-eyebrow" style="margin-bottom:2px;">O ELIJA UNA MISIÓN SUELTA</div>
+    <div id="radar-wrap" style="position:relative; width:min(50vh,380px); height:min(50vh,380px); border-radius:50%; border:1px solid var(--radar-dim); background:radial-gradient(circle, rgba(57,224,122,0.05), transparent 70%); margin:10px 0 22px;">
       <div style="position:absolute; inset:14%; border-radius:50%; border:1px solid var(--radar-dim); opacity:0.6;"></div>
       <div style="position:absolute; inset:32%; border-radius:50%; border:1px solid var(--radar-dim); opacity:0.5;"></div>
       <div style="position:absolute; inset:50%; border-radius:50%; border:1px solid var(--radar-dim); opacity:0.4;"></div>
@@ -305,6 +355,7 @@ function renderMenu(){
   screens.menu.querySelectorAll('.mode-blip').forEach(btn=>{
     btn.addEventListener('click', ()=>{ SFX.select(); openBriefing(btn.dataset.mode); });
   });
+  $('#btn-campaign').addEventListener('click', ()=>{ SFX.select(); renderCampaignHub(); showScreen('campaign'); });
   $('#btn-reset').addEventListener('click', ()=>{
     if(confirm('¿Borrar todo el progreso guardado?')){ SAVE = defaultSave(); persistSave(); renderMenu(); }
   });
@@ -360,12 +411,108 @@ function openBriefing(mode){
     btn.addEventListener('click', ()=>{
       SFX.select();
       currentLevel = parseInt(btn.dataset.level,10);
+      Engine.campaignChapter = null; // misión suelta: no forma parte de la Campaña
       startGame(mode, currentLevel);
     });
   });
   showScreen('briefing');
 }
 
+/* ------------------------------ Modo Campaña ------------------------------ */
+function renderCampaignHub(){
+  const unlockedUpTo = SAVE.campaign.unlocked;
+  screens.campaign.innerHTML = `
+  <div style="flex:1; display:flex; flex-direction:column; padding:26px 32px; gap:14px; overflow:auto;">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <button class="btn" id="btn-campaign-back">‹ VOLVER</button>
+      <div class="hairline" style="flex:1;"></div>
+    </div>
+    <div>
+      <div class="label-eyebrow">MODO HISTORIA</div>
+      <h2 style="font-family:var(--font-display); text-transform:uppercase; margin:2px 0 4px; font-size:26px; letter-spacing:0.03em; color:var(--radar);">Operación Tifón</h2>
+      <div style="color:var(--paper-dim); font-size:13px; max-width:640px;">La Escuadra Fénix necesita cada rol para ganar la campaña: cañoneros, pilotos kamikaze, baterías antiaéreas y mensajeros. Los capítulos se juegan en orden.</div>
+    </div>
+    <div class="hairline"></div>
+    <div style="display:flex; flex-direction:column; gap:10px; max-width:720px;">
+      ${CAMPAIGN.map((ch,i)=>{
+        const num = i+1;
+        const locked = num > unlockedUpTo;
+        const done = num < unlockedUpTo;
+        const meta = MODE_META[ch.mode];
+        return `<button class="chapter-card" data-idx="${i}" ${locked?'disabled':''} style="text-align:left; display:flex; align-items:center; gap:14px; background:var(--navy-800); border:1px solid ${locked?'var(--steel-dim)':'var(--steel)'}; padding:12px 16px; color:var(--paper); opacity:${locked?0.4:1};">
+          <span style="width:38px; height:38px; flex:none; border-radius:50%; display:flex; align-items:center; justify-content:center; background:var(--navy-900); border:1.5px solid var(${meta.color}); color:var(${meta.color}); font-size:14px;">${ICONS[meta.icon]}</span>
+          <span style="flex:1;">
+            <div style="font-family:var(--font-display); font-size:14px; letter-spacing:0.02em;">${locked?'🔒 ':''}${ch.title}</div>
+            <div style="font-family:var(--font-hud); font-size:10px; color:var(--paper-dim);">${meta.short} · NIVEL ${ch.level}</div>
+          </span>
+          ${done?`<span style="color:var(--radar); font-size:18px;">✓</span>`:''}
+        </button>`;
+      }).join('')}
+    </div>
+  </div>`;
+  $('#btn-campaign-back').addEventListener('click', ()=>{ SFX.select(); showScreen('menu'); renderMenu(); });
+  screens.campaign.querySelectorAll('.chapter-card').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ SFX.select(); openCampaignBriefing(parseInt(btn.dataset.idx,10)); });
+  });
+}
+
+function openCampaignBriefing(idx){
+  const ch = CAMPAIGN[idx];
+  const meta = MODE_META[ch.mode];
+  screens.campaign.innerHTML = `
+  <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px; text-align:center;">
+    <div class="label-eyebrow">${meta.short.toUpperCase()} · NIVEL ${ch.level}</div>
+    <h2 style="font-family:var(--font-display); text-transform:uppercase; font-size:28px; margin:0; max-width:600px; color:var(--radar);">${ch.title}</h2>
+    <p style="font-family:var(--font-hud); font-size:13.5px; line-height:1.7; color:var(--paper-dim); max-width:560px;">${ch.brief}</p>
+    <div style="display:flex; gap:12px; margin-top:10px;">
+      <button class="btn" id="btn-chapter-back">‹ VOLVER A LA CAMPAÑA</button>
+      <button class="btn primary" id="btn-chapter-start">COMENZAR MISIÓN</button>
+    </div>
+  </div>`;
+  $('#btn-chapter-back').addEventListener('click', ()=>{ SFX.select(); renderCampaignHub(); });
+  $('#btn-chapter-start').addEventListener('click', ()=>{ SFX.select(); startCampaignChapter(idx); });
+  showScreen('campaign');
+}
+
+function startCampaignChapter(idx){
+  Engine.campaignChapter = idx;
+  const ch = CAMPAIGN[idx];
+  startGame(ch.mode, ch.level);
+}
+
+function renderCampaignResult(idx, result){
+  const ch = CAMPAIGN[idx];
+  const meta = MODE_META[ch.mode];
+  const isLast = idx === CAMPAIGN.length-1;
+  screens.campaign.innerHTML = `
+  <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:28px; text-align:center;">
+    <div class="label-eyebrow" style="color:${result.win?'var(--radar)':'var(--rust)'};">${result.win?'MISIÓN CUMPLIDA':'MISIÓN FALLIDA'}</div>
+    <h2 style="font-family:var(--font-display); text-transform:uppercase; font-size:26px; margin:0; max-width:600px;">${ch.title}</h2>
+    ${result.win?`<div style="font-size:22px;">${starRow(result.stars)}</div>`:''}
+    <p style="font-family:var(--font-hud); font-size:13px; line-height:1.7; color:var(--paper-dim); max-width:560px;">
+      ${result.win ? ch.debrief : 'La misión no salió como se esperaba. La Escuadra Fénix necesita que lo vuelvas a intentar antes de continuar la campaña.'}
+    </p>
+    ${result.win && isLast ? `<div style="margin-top:6px; padding:14px 22px; border:1px solid var(--amber); background:rgba(240,168,48,0.08);">
+      <div class="label-eyebrow" style="color:var(--amber);">🏆 CAMPAÑA COMPLETADA</div>
+    </div>` : ''}
+    <div style="display:flex; gap:12px; margin-top:12px; flex-wrap:wrap; justify-content:center;">
+      ${result.win
+        ? (isLast
+            ? `<button class="btn primary" id="btn-camp-menu">VOLVER AL MENÚ</button>`
+            : `<button class="btn primary" id="btn-camp-next">CONTINUAR CAMPAÑA ›</button>`)
+        : `<button class="btn primary" id="btn-camp-retry">REINTENTAR MISIÓN</button>`}
+      <button class="btn" id="btn-camp-hub">MAPA DE CAPÍTULOS</button>
+    </div>
+  </div>`;
+  const nextBtn = $('#btn-camp-next');
+  if(nextBtn) nextBtn.addEventListener('click', ()=>{ SFX.select(); openCampaignBriefing(idx+1); });
+  const retryBtn = $('#btn-camp-retry');
+  if(retryBtn) retryBtn.addEventListener('click', ()=>{ SFX.select(); startCampaignChapter(idx); });
+  const menuBtn = $('#btn-camp-menu');
+  if(menuBtn) menuBtn.addEventListener('click', ()=>{ SFX.select(); showScreen('menu'); renderMenu(); });
+  $('#btn-camp-hub').addEventListener('click', ()=>{ SFX.select(); renderCampaignHub(); });
+  showScreen('campaign');
+}
 function renderResult({mode, level, win, stars, score, message, achievements}){
   const meta = MODE_META[mode];
   const hasNext = level < LEVELS_PER_MODE;
@@ -428,6 +575,7 @@ canvas.addEventListener('touchend', ()=>{ Input.mouse.down=false; }, {passive:tr
 
 const Engine = {
   running:false, paused:false, activeMode:null, lastT:0, mode:null, level:1,
+  campaignChapter:null, // índice de capítulo si la partida actual es parte de la Campaña
 };
 
 const RADIO_START_LINES = {
@@ -464,6 +612,22 @@ function endGame(result){
   }
   checkMetaAchievements(newlyUnlocked);
   radioSay(result.win ? 'Misión cumplida.' : 'Misión fracasada.');
+
+  // si esta misión formaba parte de la Campaña, mostramos el desenlace narrativo
+  // en vez de la pantalla de resultado genérica, y desbloqueamos el siguiente capítulo
+  if(Engine.campaignChapter != null){
+    const chapterIdx = Engine.campaignChapter;
+    if(result.win){
+      const nextChapterNum = chapterIdx + 2; // capítulos son 1-indexados en el guardado
+      if(nextChapterNum > SAVE.campaign.unlocked){
+        SAVE.campaign.unlocked = Math.min(CAMPAIGN.length, nextChapterNum);
+        persistSave();
+      }
+    }
+    Engine.campaignChapter = null;
+    renderCampaignResult(chapterIdx, { win:result.win, stars, score:result.score||0 });
+    return;
+  }
   renderResult({ mode:currentMode, level:currentLevel, win:result.win, stars, score:result.score||0, message:result.message||'', achievements:newlyUnlocked });
 }
 /* Barra de controles siempre visible durante la partida: pausar/reanudar, silenciar y salir.
@@ -484,7 +648,7 @@ function setupToolbar(){
   $('#tb-exit').addEventListener('click', ()=> requestExit());
 }
 function exitToMenuNow(){
-  Engine.running = false; Engine.paused = false;
+  Engine.running = false; Engine.paused = false; Engine.campaignChapter = null;
   stopAmbient(); stopEngine();
   $('#pause-overlay').classList.add('hidden');
   showScreen('menu'); renderMenu();
@@ -1709,4 +1873,4 @@ renderMenu();
 showScreen('menu');
 
 /* Gancho de depuración (no interfiere con el juego) */
-window.__DEBUG__ = { Engine, Input, SAVE, startGame, openBriefing, endGame, ctx };
+window.__DEBUG__ = { Engine, Input, SAVE, startGame, openBriefing, endGame, ctx, CAMPAIGN, renderCampaignHub, openCampaignBriefing, startCampaignChapter, renderMenu, showScreen, unlockAchievement };
