@@ -585,6 +585,88 @@ const RADIO_START_LINES = {
   mensajero: 'Piloto mensajero, entregue las órdenes con discreción.',
 };
 const ENGINE_MODES = ['kamikaze','mensajero'];
+
+/* ------------------------ Controles táctiles (móvil) ----------------------- */
+/* Construye los botones virtuales apropiados para el modo actual. Los botones
+   de "sujetar" (movimiento/ángulo/potencia) togglean Input.keys igual que el
+   teclado, así el resto del motor no necesita saber si el origen fue táctil
+   o físico. Los botones de "pulsar" (disparar, soltar, cambiar arma) llaman
+   directamente a onKeyDown, igual que un evento de teclado real. */
+function makeTouchButton(container, cls, style, label, keyCode, opts={}){
+  const btn = document.createElement('div');
+  btn.className = 'tbtn ' + cls;
+  btn.style.cssText = style;
+  btn.textContent = label;
+  container.appendChild(btn);
+  const press = e=>{
+    e.preventDefault();
+    btn.classList.add('pressed');
+    // dispara siempre el evento "de tecla" (para acciones puntuales como disparar,
+    // soltar o cambiar de arma/carril) y además, si es un control "de mantener",
+    // deja la tecla presionada para que el bucle continuo la siga leyendo
+    if(Engine.activeMode && Engine.activeMode.onKeyDown && Engine.running && !Engine.paused){
+      Engine.activeMode.onKeyDown({code:keyCode});
+    }
+    if(opts.hold){ Input.keys[keyCode] = true; }
+  };
+  const release = e=>{
+    e && e.preventDefault();
+    btn.classList.remove('pressed');
+    if(opts.hold){ Input.keys[keyCode] = false; }
+  };
+  btn.addEventListener('touchstart', press, {passive:false});
+  btn.addEventListener('touchend', release, {passive:false});
+  btn.addEventListener('touchcancel', release, {passive:false});
+  btn.addEventListener('mousedown', press);
+  btn.addEventListener('mouseup', release);
+  btn.addEventListener('mouseleave', release);
+  return btn;
+}
+function setupMobileControls(mode){
+  const mc = $('#mobile-controls');
+  mc.innerHTML = '';
+  mc.classList.add('active');
+
+  if(mode==='canonero'){
+    makeTouchButton(mc,'big','left:20px; bottom:96px;','↑','ArrowUp',{hold:true});
+    makeTouchButton(mc,'big','left:20px; bottom:18px;','↓','ArrowDown',{hold:true});
+    makeTouchButton(mc,'big','left:96px; bottom:18px;','←','ArrowLeft',{hold:true});
+    makeTouchButton(mc,'big','left:172px; bottom:18px;','→','ArrowRight',{hold:true});
+    makeTouchButton(mc,'wide','right:130px; bottom:96px;','MISIL','Digit1',{hold:false});
+    makeTouchButton(mc,'wide','right:20px; bottom:96px;','TORPEDO','Digit2',{hold:false});
+    makeTouchButton(mc,'big','right:20px; bottom:18px;','FUEGO','Space',{hold:false});
+  } else if(mode==='kamikaze'){
+    makeTouchButton(mc,'big','left:96px; bottom:96px;','↑','ArrowUp',{hold:true});
+    makeTouchButton(mc,'big','left:96px; bottom:18px;','↓','ArrowDown',{hold:true});
+    makeTouchButton(mc,'big','left:20px; bottom:57px;','←','ArrowLeft',{hold:true});
+    makeTouchButton(mc,'big','left:172px; bottom:57px;','→','ArrowRight',{hold:true});
+  } else if(mode==='antiaereo'){
+    makeTouchButton(mc,'big','left:20px; bottom:18px;','←','ArrowLeft',{hold:true});
+    makeTouchButton(mc,'big','left:96px; bottom:18px;','→','ArrowRight',{hold:true});
+    makeTouchButton(mc,'big','right:20px; bottom:18px;','FUEGO','Space',{hold:false});
+  } else if(mode==='mensajero'){
+    makeTouchButton(mc,'big','left:20px; bottom:96px;','↑','ArrowUp',{hold:true});
+    makeTouchButton(mc,'big','left:20px; bottom:18px;','↓','ArrowDown',{hold:true});
+    makeTouchButton(mc,'big','right:20px; bottom:18px;','SOLTAR','Space',{hold:false});
+  }
+}
+function teardownMobileControls(){
+  const mc = $('#mobile-controls');
+  mc.classList.remove('active');
+  mc.innerHTML = '';
+}
+/* Intenta forzar horizontal en móviles compatibles (Chrome/Android en su
+   mayoría). No todos los navegadores lo permiten (p. ej. Safari en iOS fuera
+   de una PWA instalada) — por eso además existe el aviso #rotate-overlay
+   como respaldo universal vía CSS. */
+function tryLockLandscape(){
+  try{
+    if(screen.orientation && screen.orientation.lock){
+      screen.orientation.lock('landscape').catch(()=>{});
+    }
+  }catch(e){ /* no soportado, el aviso de rotar pantalla cubre el caso */ }
+}
+
 function startGame(mode, level){
   currentMode = mode; currentLevel = level;
   showScreen('game');
@@ -596,6 +678,8 @@ function startGame(mode, level){
   Engine.running = true;
   Engine.lastT = performance.now();
   setupToolbar();
+  setupMobileControls(mode);
+  tryLockLandscape();
   startAmbient();
   if(ENGINE_MODES.includes(mode)) startEngine();
   radioSay(RADIO_START_LINES[mode] || '');
@@ -649,7 +733,7 @@ function setupToolbar(){
 }
 function exitToMenuNow(){
   Engine.running = false; Engine.paused = false; Engine.campaignChapter = null;
-  stopAmbient(); stopEngine();
+  stopAmbient(); stopEngine(); teardownMobileControls();
   $('#pause-overlay').classList.add('hidden');
   showScreen('menu'); renderMenu();
 }
@@ -750,6 +834,30 @@ function drawSea(ctx, y0, y1, t, phase){
       if(x===0) ctx.moveTo(x,yy2); else ctx.lineTo(x,yy2);
     }
     ctx.stroke();
+  }
+}
+/* Nubes con parallax: varias capas de "manchas" suaves desplazándose muy
+   lentamente por el cielo, tintadas según la fase del día. Puramente
+   decorativo — se dibuja después del cielo y antes de la acción. */
+function drawCloudBlob(ctx, x, y, r){
+  ctx.beginPath();
+  ctx.ellipse(x, y, r, r*0.42, 0, 0, Math.PI*2);
+  ctx.ellipse(x-r*0.52, y+r*0.14, r*0.6, r*0.32, 0, 0, Math.PI*2);
+  ctx.ellipse(x+r*0.55, y+r*0.10, r*0.55, r*0.3, 0, 0, Math.PI*2);
+  ctx.fill();
+}
+function drawClouds(ctx, skyHeight, t, phase){
+  const pal = phase!=null ? SKY_PALETTES[((phase%3)+3)%3] : null;
+  const tint = pal
+    ? (pal.celestial==='moon' ? 'rgba(150,160,180,0.16)' : pal.name==='ATARDECER' ? 'rgba(255,190,150,0.22)' : 'rgba(255,255,255,0.20)')
+    : 'rgba(255,255,255,0.18)';
+  ctx.fillStyle = tint;
+  for(let i=0;i<5;i++){
+    const speed = 9 + i*3.5;
+    const spread = W+320;
+    const baseX = (((i*231 + t*speed) % spread) + spread) % spread - 160;
+    const y = skyHeight*(0.14 + (i%3)*0.15);
+    drawCloudBlob(ctx, baseX, y, 34+i*8);
   }
 }
 /* Buque de guerra visto de perfil (para cañonero y escoltas de kamikaze).
@@ -930,9 +1038,26 @@ function drawCarrierTop(ctx, x, y, w, hue='#5c6a72'){
 /* Avión de caza estilizado, silueta reconocible desde cualquier ángulo
    (fuselaje + alas en cruz + estabilizador + carlinga). El morro apunta
    siempre hacia +X local antes de rotar. */
-function drawPlane(ctx, x, y, rot=0, scale=1, hue='#c8cfd6'){
+/* Avión de caza estilizado, silueta reconocible desde cualquier ángulo
+   (fuselaje + alas en cruz + estabilizador + carlinga). El morro apunta
+   siempre hacia +X local antes de rotar.
+   opts.livery: 'zero' (verde oliva IJN + hinomaru rojo) | 'ally' (gris-azul aliado) | null (color libre vía hue)
+   opts.prop:   ángulo de la hélice en radianes (animación de giro)
+   opts.bank:   -1..1, alabeo al virar (comprime el ala visualmente, como en un giro real) */
+function drawPlane(ctx, x, y, rot=0, scale=1, hue='#c8cfd6', opts={}){
+  const livery = opts.livery || null;
+  const bank = clamp(opts.bank||0, -1, 1);
+  const prop = opts.prop || 0;
+  let wingColor = hue, fuseColor = hue, roundel = null, canopyColor = 'rgba(120,195,225,0.9)';
+  if(livery==='zero'){
+    wingColor = '#57633f'; fuseColor = '#616d47'; roundel = '#b5332a'; canopyColor = 'rgba(80,100,85,0.82)';
+  } else if(livery==='ally'){
+    wingColor = '#6d7c88'; fuseColor = '#7d8c97'; canopyColor = 'rgba(140,185,205,0.85)';
+  }
   ctx.save(); ctx.translate(x,y); ctx.rotate(rot); ctx.scale(scale,scale);
-  ctx.fillStyle = hue;
+  ctx.save(); ctx.scale(1, 1-0.32*Math.abs(bank)); // alabeo: comprime el ala al girar
+
+  ctx.fillStyle = wingColor;
   // ala superior e inferior (en cruz respecto al fuselaje)
   ctx.beginPath();
   ctx.moveTo(2,-3); ctx.lineTo(-4,-19); ctx.lineTo(-10,-19); ctx.lineTo(-4,-2.2);
@@ -940,7 +1065,17 @@ function drawPlane(ctx, x, y, rot=0, scale=1, hue='#c8cfd6'){
   ctx.beginPath();
   ctx.moveTo(2,3); ctx.lineTo(-4,19); ctx.lineTo(-10,19); ctx.lineTo(-4,2.2);
   ctx.closePath(); ctx.fill();
+  // hinomaru: círculo distintivo del Zero, sobre cada ala
+  if(roundel){
+    ctx.fillStyle='#eee6d3';
+    ctx.beginPath(); ctx.arc(-6.5,-11.5,3.1,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(-6.5,11.5,3.1,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=roundel;
+    ctx.beginPath(); ctx.arc(-6.5,-11.5,2.3,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(-6.5,11.5,2.3,0,Math.PI*2); ctx.fill();
+  }
   // estabilizadores de cola
+  ctx.fillStyle = wingColor;
   ctx.beginPath();
   ctx.moveTo(-14,-1.6); ctx.lineTo(-19,-7); ctx.lineTo(-21,-7); ctx.lineTo(-16,-1.4);
   ctx.closePath(); ctx.fill();
@@ -948,6 +1083,7 @@ function drawPlane(ctx, x, y, rot=0, scale=1, hue='#c8cfd6'){
   ctx.moveTo(-14,1.6); ctx.lineTo(-19,7); ctx.lineTo(-21,7); ctx.lineTo(-16,1.4);
   ctx.closePath(); ctx.fill();
   // fuselaje principal
+  ctx.fillStyle = fuseColor;
   ctx.beginPath();
   ctx.moveTo(20,0);
   ctx.quadraticCurveTo(11,-3.2, -5,-2.8);
@@ -959,15 +1095,28 @@ function drawPlane(ctx, x, y, rot=0, scale=1, hue='#c8cfd6'){
   // línea de sombra dorsal (aleta vertical sugerida)
   ctx.strokeStyle='rgba(0,0,0,0.32)'; ctx.lineWidth=1.4;
   ctx.beginPath(); ctx.moveTo(-15,0); ctx.lineTo(-21,0); ctx.stroke();
+  // franja de cola distintiva (detalle de escuadrón)
+  if(livery){
+    ctx.fillStyle = livery==='zero' ? 'rgba(230,225,210,0.55)' : 'rgba(255,255,255,0.4)';
+    ctx.fillRect(-19,-1.1,2.2,2.2);
+  }
   // carlinga
-  ctx.fillStyle='rgba(120,195,225,0.9)';
+  ctx.fillStyle = canopyColor;
   ctx.beginPath(); ctx.ellipse(7,0,4.2,1.7,0,0,Math.PI*2); ctx.fill();
-  // punta de morro / hélice
-  ctx.fillStyle='rgba(0,0,0,0.35)';
-  ctx.beginPath(); ctx.arc(19,0,1.6,0,Math.PI*2); ctx.fill();
+  // hélice giratoria en el morro
+  ctx.save();
+  ctx.translate(19.5,0); ctx.rotate(prop);
+  ctx.strokeStyle='rgba(15,15,15,0.55)'; ctx.lineWidth=1.1;
+  ctx.beginPath(); ctx.moveTo(-5.2,0); ctx.lineTo(5.2,0); ctx.moveTo(0,-5.2); ctx.lineTo(0,5.2); ctx.stroke();
+  ctx.fillStyle='rgba(10,10,10,0.4)'; ctx.beginPath(); ctx.arc(0,0,5.4,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle='rgba(15,15,15,0.6)';
+  ctx.beginPath(); ctx.arc(19.5,0,1.5,0,Math.PI*2); ctx.fill();
+
+  ctx.restore(); // alabeo
   ctx.restore();
 }
-function drawExplosion(ctx, x, y, p, size=1){
+function drawExplosion(ctx, x, y, p, size=1, seed=0){
   // p: progreso 0..1
   const r = size*(10 + p*36);
   const g = ctx.createRadialGradient(x,y,0,x,y,r);
@@ -976,6 +1125,21 @@ function drawExplosion(ctx, x, y, p, size=1){
   g.addColorStop(1, `rgba(200,40,20,0)`);
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  // onda de choque expansiva, breve
+  if(p<0.42){
+    ctx.strokeStyle = `rgba(255,232,195,${(0.42-p)*1.3})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x,y,r*1.28,0,Math.PI*2); ctx.stroke();
+  }
+  // brasas/chispas despedidas hacia afuera y ligeramente hacia arriba
+  ctx.fillStyle = `rgba(255,175,85,${(1-p)*0.85})`;
+  const emberCount = 6;
+  for(let i=0;i<emberCount;i++){
+    const a = seed + i*(Math.PI*2/emberCount) + Math.sin(seed*3+i)*0.35;
+    const d = size*(6+p*32);
+    const ex = x+Math.cos(a)*d, ey = y+Math.sin(a)*d - p*9;
+    ctx.beginPath(); ctx.arc(ex,ey, Math.max(0.4,1.7*(1-p)), 0, Math.PI*2); ctx.fill();
+  }
 }
 function hudGauge(x,y,w,h,pct,color,bg='rgba(255,255,255,0.08)'){
   ctx.fillStyle = bg; ctx.fillRect(x,y,w,h);
@@ -986,6 +1150,68 @@ function hudText(txt,x,y,size=13,color='#e9e3d0',align='left'){
   ctx.font = `${size}px 'Share Tech Mono', monospace`;
   ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline='top';
   ctx.fillText(txt,x,y);
+}
+/* Panel semitransparente con esquinas cortadas, estilo consola militar, para
+   agrupar clústeres de texto del HUD en vez de dejarlos flotando sueltos
+   sobre la escena. */
+function drawHudPanel(x,y,w,h,accent='rgba(57,224,122,0.35)'){
+  const c = 8;
+  ctx.fillStyle = 'rgba(4,9,16,0.52)';
+  ctx.beginPath();
+  ctx.moveTo(x+c,y); ctx.lineTo(x+w,y); ctx.lineTo(x+w,y+h-c); ctx.lineTo(x+w-c,y+h);
+  ctx.lineTo(x,y+h); ctx.lineTo(x,y+c); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = accent; ctx.lineWidth = 1; ctx.stroke();
+}
+
+/* -------------------- Encuadre en primera persona ------------------------- */
+/* Viñeta oscurecida en los bordes, como mirando a través de una mira óptica
+   o el cristal de una cabina: da profundidad y sensación de "estar dentro". */
+function drawCockpitVignette(ctx, strength=0.55){
+  const g = ctx.createRadialGradient(W/2,H/2, H*0.34, W/2,H/2, H*0.78);
+  g.addColorStop(0,'rgba(0,0,0,0)');
+  g.addColorStop(1,`rgba(0,0,0,${strength})`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+}
+/* Mira óptica/telémetro (cañón costero, torreta antiaérea): retícula circular
+   con marcas de milésimas centrada en el punto de puntería actual, más un
+   marco metálico envolvente — como mirar a través de un visor real. */
+function drawSightFrame(ctx, aimX, aimY){
+  drawCockpitVignette(ctx, 0.5);
+  ctx.save();
+  ctx.strokeStyle='rgba(200,255,220,0.42)'; ctx.lineWidth=1.3;
+  ctx.beginPath(); ctx.arc(aimX,aimY,72,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(aimX,aimY,36,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(aimX-94,aimY); ctx.lineTo(aimX-42,aimY);
+  ctx.moveTo(aimX+42,aimY); ctx.lineTo(aimX+94,aimY);
+  ctx.moveTo(aimX,aimY-94); ctx.lineTo(aimX,aimY-42);
+  ctx.moveTo(aimX,aimY+42); ctx.lineTo(aimX,aimY+94);
+  ctx.stroke();
+  for(let i=0;i<12;i++){
+    const a = (i/12)*Math.PI*2;
+    ctx.beginPath();
+    ctx.moveTo(aimX+Math.cos(a)*72, aimY+Math.sin(a)*72);
+    ctx.lineTo(aimX+Math.cos(a)*80, aimY+Math.sin(a)*80);
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.strokeStyle='rgba(0,0,0,0.55)'; ctx.lineWidth=12;
+  ctx.strokeRect(6,6,W-12,H-12);
+}
+/* Marco de cabina (aviones): montantes en las esquinas y travesaño central del
+   parabrisas, simulando ver la acción desde dentro del habitáculo. */
+function drawCockpitFrame(ctx){
+  drawCockpitVignette(ctx, 0.42);
+  ctx.fillStyle='rgba(8,10,8,0.5)';
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(92,0); ctx.lineTo(0,72); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(W,0); ctx.lineTo(W-92,0); ctx.lineTo(W,72); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0,H); ctx.lineTo(92,H); ctx.lineTo(0,H-72); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(W,H); ctx.lineTo(W-92,H); ctx.lineTo(W,H-72); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='rgba(8,10,8,0.35)';
+  ctx.fillRect(W/2-3,0,6,48);
+  ctx.strokeStyle='rgba(0,0,0,0.4)'; ctx.lineWidth=8;
+  ctx.strokeRect(4,4,W-8,H-8);
 }
 
 /* ==========================================================================
@@ -1015,6 +1241,8 @@ class CanoneroMode{
     // viento del nivel: desvía el misil (no el torpedo, que va bajo el agua)
     this.wind = rand(-1,1) * (9 + this.level*3.5);
     this.phase = this.level % 3; // día / atardecer / noche, según el nivel
+    this.recoil = 0; // retroceso animado del cañón al disparar (0..1)
+    this.smoke = []; // humo persistente de la boca de cañón, tras el fogonazo
     this.ended = false;
   }
   spawnShip(){
@@ -1057,9 +1285,12 @@ class CanoneroMode{
     if(this.ended || this.fireCooldown>0 || this.shotsUsed>=this.cfg.maxShots) return;
     this.fireCooldown = 0.55; this.shotsUsed++;
     SFX.fire();
+    this.recoil = 1; // dispara la animación de retroceso del cañón
     // fogonazo en la boca del cañón, apuntando en la dirección actual
     const rad = deg2rad(this.angle);
-    this.particles.push({ x:this.gunX+48*Math.cos(rad), y:this.gunY-48*Math.sin(rad), t:0, dur:0.09, flash:true });
+    const tipX = this.gunX+50*Math.cos(rad), tipY = this.gunY-50*Math.sin(rad);
+    this.particles.push({ x:tipX, y:tipY, t:0, dur:0.09, flash:true });
+    this.smoke.push({ x:tipX, y:tipY, t:0, dur:0.9, r:4 });
     if(this.weapon==='missile'){
       const lane = this.aimedLane();
       const targetX = this.aimedTargetX();
@@ -1077,6 +1308,9 @@ class CanoneroMode{
     this.fireCooldown = Math.max(0, this.fireCooldown-dt);
     this.detection = Math.max(0, this.detection - this.cfg.detectionDecay*dt);
     this.flashTimer = Math.max(0, this.flashTimer-dt);
+    this.recoil = Math.max(0, this.recoil - dt*3.2);
+    this.smoke.forEach(s=>{ s.t += dt; s.x += 5*dt; s.y -= 10*dt; });
+    this.smoke = this.smoke.filter(s=> s.t < s.dur);
 
     if(Input.keys['ArrowUp']) this.angle = clamp(this.angle + 55*dt, 5, 82);
     if(Input.keys['ArrowDown']) this.angle = clamp(this.angle - 55*dt, 5, 82);
@@ -1168,15 +1402,18 @@ class CanoneroMode{
   }
   draw(ctx){
     drawSky(ctx,'#0a1d2e','#123049', 300, this.phase);
+    drawClouds(ctx, 300, this.t, this.phase);
     drawSea(ctx, 300, H, this.t, this.phase);
     // horizonte
     ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.beginPath(); ctx.moveTo(0,300); ctx.lineTo(W,300); ctx.stroke();
-    // líneas guía de los tres carriles, para que se entienda el "mapa" de distancias
+    // líneas guía de los carriles: casi invisibles salvo la activa, que se resalta con etiqueta
     this.lanes.forEach((L,i)=>{
-      ctx.strokeStyle = i===((this.weapon==='missile')?this.aimedLane():this.lane) ? 'rgba(57,224,122,0.28)' : 'rgba(255,255,255,0.05)';
-      ctx.setLineDash([4,6]);
-      ctx.beginPath(); ctx.moveTo(0,L.y+ L.scale*14); ctx.lineTo(W,L.y+L.scale*14); ctx.stroke();
-      ctx.setLineDash([]);
+      const active = i===((this.weapon==='missile')?this.aimedLane():this.lane);
+      const yy = L.y + L.scale*14;
+      ctx.strokeStyle = active ? 'rgba(57,224,122,0.22)' : 'rgba(255,255,255,0.035)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(W,yy); ctx.stroke();
+      if(active) hudText(L.name, W-14, yy-15, 9, 'rgba(130,220,170,0.7)', 'right');
     });
 
     // restos hundiéndose: se inclinan, se hunden y arden antes de desaparecer del todo
@@ -1192,18 +1429,52 @@ class CanoneroMode{
     this.ships.forEach(s=> drawShip(ctx, s.x, s.y, s.scale, s.hue, 0, Math.sin(this.t*1.5+s.x*0.03)*0.028));
     this.particles.forEach(pt=>{
       const p = pt.t/pt.dur;
-      if(pt.boom){ drawWaterGlow(ctx, pt.x, pt.y+16, 46*(1-p), (1-p)*0.5); drawExplosion(ctx, pt.x, pt.y, p, 1.1); }
+      if(pt.boom){ drawWaterGlow(ctx, pt.x, pt.y+16, 46*(1-p), (1-p)*0.5); drawExplosion(ctx, pt.x, pt.y, p, 1.1, pt.x*0.7+pt.y*1.3); }
       if(pt.splash){ ctx.strokeStyle=`rgba(200,230,240,${1-p})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(pt.x,pt.y,10+p*22,0,Math.PI*2); ctx.stroke(); }
       if(pt.smoke){ ctx.fillStyle=`rgba(35,35,35,${(1-p)*0.5})`; ctx.beginPath(); ctx.arc(pt.x,pt.y,4+p*14,0,Math.PI*2); ctx.fill(); }
       if(pt.flash) drawMuzzleFlash(ctx, pt.x, pt.y, p);
     });
 
-    // cañón
+    // promontorio costero: el cañón está apoyado en tierra, no flotando sobre el mar
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath(); ctx.ellipse(this.gunX+8, this.gunY+36, 108, 20, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#42392a';
+    ctx.beginPath(); ctx.ellipse(this.gunX-12, this.gunY+18, 110, 42, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(this.gunX-78, this.gunY+42, 92, 48, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#6b5a3e';
+    ctx.beginPath(); ctx.ellipse(this.gunX-6, this.gunY+6, 92, 27, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(70,95,55,0.55)';
+    for(let i=0;i<5;i++){
+      const bx = this.gunX-96+i*32, by = this.gunY+20+((i%2)*9);
+      ctx.beginPath(); ctx.ellipse(bx,by,11,5.4,0,0,Math.PI*2); ctx.fill();
+    }
+
+    // cañón costero: sacos de arena, base giratoria, escudo y retroceso animado
     ctx.save(); ctx.translate(this.gunX,this.gunY);
-    ctx.fillStyle='#2a3138'; ctx.beginPath(); ctx.arc(0,0,20,Math.PI,0); ctx.fill();
+    ctx.fillStyle = '#8a7a58';
+    for(let i=0;i<10;i++){
+      const a = (i/10)*Math.PI*2;
+      ctx.beginPath(); ctx.ellipse(Math.cos(a)*25, Math.sin(a)*13+5, 7.2,4.6,0,0,Math.PI*2); ctx.fill();
+    }
+    ctx.fillStyle='#242b31'; ctx.beginPath(); ctx.arc(0,0,19,Math.PI,0); ctx.fill();
+    ctx.fillStyle='#333e46'; ctx.beginPath(); ctx.arc(0,0,12,0,Math.PI*2); ctx.fill();
     ctx.save(); ctx.rotate(-deg2rad(this.angle));
-    ctx.fillStyle='#4a5560'; ctx.fillRect(0,-4,48,8);
-    ctx.restore(); ctx.restore();
+    ctx.fillStyle='#3a444d';
+    ctx.beginPath(); ctx.moveTo(-6,-15); ctx.lineTo(-15,-10); ctx.lineTo(-15,10); ctx.lineTo(-6,15); ctx.closePath(); ctx.fill();
+    const barrelLen = 50 - this.recoil*11;
+    const bgrad = ctx.createLinearGradient(0,-4,0,4);
+    bgrad.addColorStop(0,'#5c6871'); bgrad.addColorStop(1,'#333c44');
+    ctx.fillStyle = bgrad; ctx.fillRect(0,-4,barrelLen,8);
+    ctx.fillStyle='#20262b'; ctx.fillRect(barrelLen-6,-5.4,7,10.8);
+    ctx.restore();
+    ctx.restore();
+
+    // humo persistente de la boca del cañón tras cada disparo
+    this.smoke.forEach(s=>{
+      const p = s.t/s.dur;
+      ctx.fillStyle = `rgba(95,95,95,${(1-p)*0.32})`;
+      ctx.beginPath(); ctx.arc(s.x,s.y, s.r+p*24, 0, Math.PI*2); ctx.fill();
+    });
 
     // ---- MIRA EN VIVO: exactamente dónde caerá el próximo disparo ----
     if(!this.ended && this.fireCooldown<=0){
@@ -1256,27 +1527,38 @@ class CanoneroMode{
 
     if(this.flashTimer>0){ ctx.fillStyle=`rgba(200,40,20,${this.flashTimer*0.5})`; ctx.fillRect(0,0,W,H); }
 
-    // ---- HUD ----
-    hudText('CAÑONERO NAVAL', 16, 12, 14, '#39e07a');
-    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name}`, 16, 30, 11, '#9c9782');
-    hudText(`HUNDIDOS ${this.kills}/${this.cfg.targetKills}`, W-16, 12, 13, '#e9e3d0', 'right');
-    hudText(`MUNICIÓN ${this.cfg.maxShots-this.shotsUsed}`, W-16, 30, 12, '#e9e3d0', 'right');
-    hudText(`VIENTO ${this.wind>=0?'→':'←'} ${Math.abs(this.wind).toFixed(0)} (afecta al misil)`, W-16, 48, 10, '#7fd7e0', 'right');
-    for(let i=0;i<3;i++){ ctx.fillStyle = i<this.lives ? '#39e07a' : 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(W-16-i*18,68,5,0,Math.PI*2); ctx.fill(); }
-
-    hudText('DETECCIÓN', 16, H-58, 11, '#f0a830');
-    hudGauge(16, H-42, 200, 12, this.detection/100, this.detection>70?'#d1462f':'#f0a830');
-
-    hudText(`ARMA: ${this.weapon==='missile'?'MISIL (1)':'TORPEDO (2)'}`, 16, H-112, 12, '#e9e3d0');
-    if(this.weapon==='missile'){
-      hudText(`ÁNGULO ${this.angle.toFixed(0)}° → CARRIL ${this.lanes[this.aimedLane()].name}`, 16, H-94, 11, '#f0d080');
-      hudText(`POTENCIA ${this.power.toFixed(0)} → ALCANCE X`, 16, H-78, 11, '#9c9782');
-    } else {
-      hudText(`CARRIL SELECCIONADO: ${this.lanes[this.lane].name} (↑/↓)`, 16, H-94, 11, '#7fd7e0');
-      hudText(`VELOCIDAD ${this.power.toFixed(0)} (←/→)`, 16, H-78, 11, '#9c9782');
+    // encuadre en primera persona: mira óptica del cañón, centrada en el punto de puntería
+    {
+      const sightLane = this.weapon==='missile' ? this.aimedLane() : this.lane;
+      const sightX = this.weapon==='missile' ? this.aimedTargetX() : W-10;
+      drawSightFrame(ctx, sightX, this.lanes[sightLane].y);
     }
 
-    hudText('↑↓ ÁNGULO/CARRIL · ←→ POTENCIA · 1/2 ARMA · ESPACIO DISPARAR · MIRA PUNTEADA = DÓNDE CAERÁ', W/2, H-16, 10, '#6a7580', 'center');
+    // ---- HUD agrupado en paneles ----
+    drawHudPanel(12,8,206,42);
+    hudText('CAÑONERO NAVAL', 22, 14, 13, '#39e07a');
+    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name}`, 22, 31, 10, '#9c9782');
+
+    drawHudPanel(W-208,8,196,80);
+    hudText(`HUNDIDOS ${this.kills}/${this.cfg.targetKills}`, W-198, 14, 12, '#e9e3d0');
+    hudText(`MUNICIÓN ${this.cfg.maxShots-this.shotsUsed}`, W-198, 31, 11, '#e9e3d0');
+    hudText(`VIENTO ${this.wind>=0?'→':'←'} ${Math.abs(this.wind).toFixed(0)}`, W-198, 47, 10, '#7fd7e0');
+    for(let i=0;i<3;i++){ ctx.fillStyle = i<this.lives ? '#39e07a' : 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(W-198+7+i*18,72,5,0,Math.PI*2); ctx.fill(); }
+
+    drawHudPanel(12,H-148,244,132, this.detection>70?'rgba(209,70,47,0.5)':'rgba(240,168,48,0.35)');
+    hudText('DETECCIÓN', 22, H-140, 10, '#f0a830');
+    hudGauge(22, H-126, 210, 11, this.detection/100, this.detection>70?'#d1462f':'#f0a830');
+    hudText(`ARMA: ${this.weapon==='missile'?'MISIL (1)':'TORPEDO (2)'}`, 22, H-104, 11, '#e9e3d0');
+    if(this.weapon==='missile'){
+      hudText(`ÁNGULO ${this.angle.toFixed(0)}° → CARRIL ${this.lanes[this.aimedLane()].name}`, 22, H-86, 10, '#f0d080');
+      hudText(`POTENCIA ${this.power.toFixed(0)} → ALCANCE X`, 22, H-70, 10, '#9c9782');
+    } else {
+      hudText(`CARRIL: ${this.lanes[this.lane].name} (↑/↓)`, 22, H-86, 10, '#7fd7e0');
+      hudText(`VELOCIDAD ${this.power.toFixed(0)} (←/→)`, 22, H-70, 10, '#9c9782');
+    }
+    hudText('↑↓ ÁNGULO/CARRIL · ←→ POTENCIA · 1/2 ARMA', 22, H-54, 9, '#6a7580');
+
+    hudText('ESPACIO DISPARAR · LA MIRA PUNTEADA MUESTRA DÓNDE CAERÁ', W/2, H-16, 10, '#6a7580', 'center');
   }
   getHealthFraction(){ return this.lives/3; }
   onKeyUp(){}
@@ -1458,6 +1740,7 @@ class KamikazeMode{
     if(this.shake>0){ ox = rand(-1,1)*this.shake*6; oy = rand(-1,1)*this.shake*6; }
     ctx.save(); ctx.translate(ox,oy);
     drawSky(ctx,'#1a2230','#0d1520', H, this.phase);
+    drawClouds(ctx, this.seaY, this.t, this.phase);
     drawSea(ctx, this.seaY, H, this.t, this.phase);
     ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.beginPath(); ctx.moveTo(0,this.seaY); ctx.lineTo(W,this.seaY); ctx.stroke();
 
@@ -1490,19 +1773,26 @@ class KamikazeMode{
     });
 
     drawFlightShadow(ctx, this.plane.x, this.seaY, this.seaY-this.plane.y, this.seaY-60);
-    drawPlane(ctx, this.plane.x, this.plane.y, this.plane.vx===0&&this.plane.vy===0?0:Math.atan2(this.plane.vy,this.plane.vx||60), 1.3, '#e0d0b0');
+    drawPlane(ctx, this.plane.x, this.plane.y, this.plane.vx===0&&this.plane.vy===0?0:Math.atan2(this.plane.vy,this.plane.vx||60), 1.3, '#e0d0b0',
+      { livery:'zero', prop:this.t*42, bank:clamp(this.plane.vx/220,-1,1) });
 
-    this.particles.forEach(p=>{ if(p.flash) drawMuzzleFlash(ctx,p.x,p.y,p.t/p.dur); else drawExplosion(ctx,p.x,p.y,p.t/p.dur, p.small?0.4:1); });
+    this.particles.forEach(p=>{ if(p.flash) drawMuzzleFlash(ctx,p.x,p.y,p.t/p.dur); else drawExplosion(ctx,p.x,p.y,p.t/p.dur, p.small?0.4:1, p.x*0.7+p.y*1.3); });
 
     if(this.hitFlash>0){ ctx.fillStyle=`rgba(200,40,20,${this.hitFlash*0.35})`; ctx.fillRect(0,0,W,H); }
     ctx.restore();
 
-    hudText('ESCUADRÓN KAMIKAZE', 16, 12, 14, '#d1462f');
-    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name}`, 16, 30, 11, '#9c9782');
-    hudText(`TIEMPO ${Math.max(0,this.timeLeft).toFixed(1)}s`, W-16, 12, 13, '#e9e3d0', 'right');
-    if(this.missiles.length>0) hudText('¡MISIL GUIADO EN VUELO!', W-16, 30, 11, '#f0603a', 'right');
-    hudText('INTEGRIDAD', 16, H-42, 11, '#f0a830');
-    hudGauge(16, H-26, 200, 12, this.hp/this.cfg.hp, '#d1462f');
+    // encuadre en primera persona: cabina del avión
+    drawCockpitFrame(ctx);
+
+    drawHudPanel(12,8,206,42);
+    hudText('ESCUADRÓN KAMIKAZE', 22, 14, 12, '#d1462f');
+    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name}`, 22, 31, 10, '#9c9782');
+    drawHudPanel(W-176,8,164,42, this.missiles.length>0?'rgba(240,96,58,0.55)':'rgba(57,224,122,0.35)');
+    hudText(`TIEMPO ${Math.max(0,this.timeLeft).toFixed(1)}s`, W-166, 14, 12, '#e9e3d0');
+    if(this.missiles.length>0) hudText('¡MISIL GUIADO!', W-166, 31, 10, '#f0603a');
+    drawHudPanel(12,H-64,224,48);
+    hudText('INTEGRIDAD', 22, H-56, 10, '#f0a830');
+    hudGauge(22, H-42, 200, 11, this.hp/this.cfg.hp, '#d1462f');
     hudText('FLECHAS/WASD MUEVEN · IMPACTA CONTRA EL RETÍCULO ROJO', W/2, H-16, 10, '#6a7580', 'center');
   }
   getHealthFraction(){ return this.hp/this.cfg.hp; }
@@ -1648,16 +1938,17 @@ class AntiaereoMode{
   }
   draw(ctx){
     drawSky(ctx,'#152233','#0a121c', H-70, this.phase);
+    drawClouds(ctx, H-70, this.t, this.phase);
     drawSea(ctx, H-70, H, this.t, this.phase);
     // portaaviones defendido, visto en planta (los aviones caen verticalmente sobre él)
     drawCarrierTop(ctx, W/2, H-48, 320, '#5c6a72');
 
     this.planes.forEach(p=>{
       drawFlightShadow(ctx, p.x, H-52, (H-52)-p.y, H-52+40);
-      drawPlane(ctx, p.x, p.y, Math.PI/2, 1.35, '#c9463a');
+      drawPlane(ctx, p.x, p.y, Math.PI/2, 1.35, '#c9463a', { livery:'zero', prop:this.t*38+p.phase*3 });
     });
     this.bullets.forEach(b=>{ ctx.fillStyle='#f0d080'; ctx.beginPath(); ctx.arc(b.x,b.y,3,0,Math.PI*2); ctx.fill(); });
-    this.particles.forEach(p=>{ if(p.flash) drawMuzzleFlash(ctx,p.x,p.y,p.t/p.dur); else drawExplosion(ctx,p.x,p.y,p.t/p.dur,0.8); });
+    this.particles.forEach(p=>{ if(p.flash) drawMuzzleFlash(ctx,p.x,p.y,p.t/p.dur); else drawExplosion(ctx,p.x,p.y,p.t/p.dur,0.8,p.x*0.7+p.y*1.3); });
 
     // torreta
     ctx.save(); ctx.translate(this.turretX,this.turretY);
@@ -1666,11 +1957,21 @@ class AntiaereoMode{
     ctx.fillStyle='#4a5560'; ctx.fillRect(-3,-40,6,40);
     ctx.restore(); ctx.restore();
 
-    hudText('FUEGO ANTIAÉREO', 16, 12, 14, '#f0a830');
-    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name} · OLEADA ${Math.min(this.wave,this.cfg.waves)}/${this.cfg.waves}`, 16, 30, 11, '#9c9782');
-    hudText(`DERRIBOS ${this.planesDowned}`, W-16, 12, 13, '#e9e3d0', 'right');
-    hudText('PORTAAVIONES', 16, H-42, 11, '#39e07a');
-    hudGauge(16, H-26, 200, 12, this.carrierHP/this.cfg.carrierHP, '#39e07a');
+    // encuadre en primera persona: mira de la torreta, proyectada en la dirección de puntería
+    {
+      const sightX = clamp(this.turretX + Math.cos(this.aimAngle)*230, 40, W-40);
+      const sightY = clamp(this.turretY-18 + Math.sin(this.aimAngle)*230, 40, H-100);
+      drawSightFrame(ctx, sightX, sightY);
+    }
+
+    drawHudPanel(12,8,220,42);
+    hudText('FUEGO ANTIAÉREO', 22, 14, 13, '#f0a830');
+    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name} · OLEADA ${Math.min(this.wave,this.cfg.waves)}/${this.cfg.waves}`, 22, 31, 9, '#9c9782');
+    drawHudPanel(W-150,8,138,42);
+    hudText(`DERRIBOS ${this.planesDowned}`, W-140, 14, 12, '#e9e3d0');
+    drawHudPanel(12,H-64,224,48);
+    hudText('PORTAAVIONES', 22, H-56, 10, '#39e07a');
+    hudGauge(22, H-42, 200, 11, this.carrierHP/this.cfg.carrierHP, '#39e07a');
     hudText('APUNTA CON EL MOUSE O ←→ · ESPACIO/CLIC DISPARA', W/2, H-16, 10, '#6a7580', 'center');
   }
   getHealthFraction(){ return this.carrierHP/this.cfg.carrierHP; }
@@ -1718,7 +2019,7 @@ class MensajeroMode{
   dropPod(){
     if(this.ended || this.podsLeft<=0) return;
     this.podsLeft--; SFX.drop();
-    this.pods.push({ x:this.plane.x, y:this.plane.y, vx:this.cfg.forwardSpeed, vy:20 });
+    this.pods.push({ x:this.plane.x, y:this.plane.y, vx:this.cfg.forwardSpeed, vy:20, t:0 });
   }
   update(dt){
     if(this.ended) return;
@@ -1762,10 +2063,14 @@ class MensajeroMode{
     this.missiles = this.missiles.filter(m=>!m.dead);
 
     this.pods.forEach(pod=>{
-      pod.vy += 300*dt;
+      pod.t += dt;
+      const chuteOpen = pod.t > 0.35; // el paracaídas se despliega poco después de soltarse
+      pod.vy += (chuteOpen ? 90 : 300) * dt; // frena la caída una vez abierto
+      if(chuteOpen) pod.vy = Math.min(pod.vy, 150);
       // el viento desvía el mensaje mientras cae — el avión vuela recto, pero la carga no
-      pod.vx += this.wind*dt;
+      pod.vx += this.wind*dt*(chuteOpen?1.6:0.4); // el paracaídas lo hace más sensible al viento
       pod.x += pod.vx*dt; pod.y += pod.vy*dt;
+      pod.chuteOpen = chuteOpen;
     });
     this.pods = this.pods.filter(pod=>{
       if(pod.y >= H-92){
@@ -1805,6 +2110,7 @@ class MensajeroMode{
   }
   draw(ctx){
     drawSky(ctx,'#101c28','#08111a', H, this.phase);
+    drawClouds(ctx, this.seaY, this.t, this.phase);
     drawSea(ctx, this.seaY, H, this.t, this.phase);
 
     // línea de altitud mínima segura: por debajo de ella, las patrullas pueden dispararte
@@ -1814,15 +2120,31 @@ class MensajeroMode{
     ctx.beginPath(); ctx.moveTo(0,this.cfg.dangerY); ctx.lineTo(W,this.cfg.dangerY); ctx.stroke(); ctx.setLineDash([]);
     hudText('ALTITUD MÍNIMA SEGURA', 8, this.cfg.dangerY-14, 9, lowAltitude?'#d1462f':'#6a7580');
 
-    // zona de entrega amiga
-    ctx.strokeStyle='rgba(57,224,122,0.8)'; ctx.lineWidth=2;
+    // base amiga: pequeño muelle con torre de señales y bandera, no solo un círculo
+    ctx.save(); ctx.translate(this.zone.x, this.zone.y);
+    ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(0,10,this.zone.r*1.15,10,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#5a4a34'; ctx.fillRect(-this.zone.r*0.9,2,this.zone.r*1.8,7);
+    ctx.strokeStyle='#3a2f20'; ctx.lineWidth=1;
+    for(let i=-2;i<=2;i++){ ctx.beginPath(); ctx.moveTo(i*(this.zone.r*0.36),2); ctx.lineTo(i*(this.zone.r*0.36),9); ctx.stroke(); }
+    ctx.strokeStyle='#3a2f20'; ctx.lineWidth=2.4;
+    ctx.beginPath(); ctx.moveTo(-6,-30); ctx.lineTo(-6,2); ctx.stroke();
+    ctx.fillStyle = SKY_PALETTES[this.phase].name==='NOCHE' ? '#f0d080' : '#d1462f';
+    ctx.beginPath(); ctx.moveTo(-6,-30); ctx.lineTo(10,-25); ctx.lineTo(-6,-20); ctx.closePath(); ctx.fill();
+    if(SKY_PALETTES[this.phase].name==='NOCHE'){
+      ctx.fillStyle='rgba(240,208,128,0.5)'; ctx.beginPath(); ctx.arc(-6,-30,7,0,Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+    ctx.strokeStyle='rgba(57,224,122,0.75)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(this.zone.x,this.zone.y,this.zone.r,0,Math.PI*2); ctx.stroke();
-    ctx.fillStyle='rgba(57,224,122,0.12)'; ctx.fill();
+    ctx.fillStyle='rgba(57,224,122,0.10)'; ctx.fill();
     hudText('ZONA AMIGA', this.zone.x, this.zone.y-this.zone.r-16, 10, '#39e07a','center');
 
     this.patrols.forEach(p=>{
       drawShip(ctx, p.x, p.y, 0.6, '#8a3a30', 0, Math.sin(this.t*1.7+p.x*0.05)*0.032);
-      ctx.strokeStyle='rgba(209,70,47,0.5)'; ctx.beginPath(); ctx.arc(p.x,p.y,this.cfg.missileRange>250?26:26,0,Math.PI*2); ctx.stroke();
+      const threatPulse = lowAltitude ? 0.5+Math.sin(this.t*6)*0.15 : 0.22;
+      ctx.strokeStyle=`rgba(209,70,47,${threatPulse})`; ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.arc(p.x,p.y,this.cfg.missileRange*0.16+26,0,Math.PI*2); ctx.stroke();
+      ctx.setLineDash([]);
     });
 
     // misiles de patrulla, con estela de humo
@@ -1838,29 +2160,50 @@ class MensajeroMode{
     ctx.strokeStyle='rgba(230,220,200,0.18)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.moveTo(this.plane.x-34, this.plane.y); ctx.lineTo(this.plane.x-14, this.plane.y); ctx.stroke();
     drawFlightShadow(ctx, this.plane.x, this.seaY, this.seaY-this.plane.y, this.seaY-60);
-    drawPlane(ctx, this.plane.x, this.plane.y, Math.atan2(this.plane.vy, this.cfg.forwardSpeed), 1.3, '#d8cdb0');
+    drawPlane(ctx, this.plane.x, this.plane.y, Math.atan2(this.plane.vy, this.cfg.forwardSpeed), 1.3, '#d8cdb0',
+      { livery:'ally', prop:this.t*40, bank:clamp(this.plane.vy/180,-1,1) });
 
+    // cápsula de mensaje: cae libre y, poco después, despliega un paracaídas real
     this.pods.forEach(pod=>{
       ctx.save(); ctx.translate(pod.x,pod.y);
-      ctx.fillStyle='#e9c860'; ctx.fillRect(-4,-4,8,8);
-      ctx.strokeStyle='rgba(233,200,96,0.4)'; ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(-6,-4); ctx.lineTo(6,-4); ctx.closePath(); ctx.stroke();
+      if(pod.chuteOpen){
+        const openT = clamp((pod.t-0.35)/0.25, 0, 1); // el paracaídas se abre en un cuarto de segundo
+        const w = 9*openT, h = 15*openT;
+        ctx.strokeStyle='rgba(233,200,96,0.55)'; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(-3,-4); ctx.lineTo(-w,-14-h); ctx.moveTo(3,-4); ctx.lineTo(w,-14-h); ctx.stroke();
+        ctx.fillStyle='rgba(233,222,190,0.85)';
+        ctx.beginPath(); ctx.ellipse(0,-14-h,w+2,h*0.6+2,0,Math.PI,0); ctx.fill();
+      } else {
+        ctx.strokeStyle='rgba(233,200,96,0.35)';
+        ctx.beginPath(); ctx.moveTo(0,-3); ctx.lineTo(-4,-9); ctx.moveTo(0,-3); ctx.lineTo(4,-9); ctx.stroke();
+      }
+      ctx.fillStyle='#2f3941'; ctx.fillRect(-3.6,-4,7.2,8);
+      ctx.fillStyle='#e9c860'; ctx.fillRect(-3.6,-1,7.2,2.4);
       ctx.restore();
     });
     this.particles.forEach(p=>{
-      if(p.good) drawExplosion(ctx,p.x,p.y,p.t/p.dur,0.5);
-      else if(p.boom) drawExplosion(ctx,p.x,p.y,p.t/p.dur,0.7);
+      if(p.good) drawExplosion(ctx,p.x,p.y,p.t/p.dur,0.5,p.x*0.7+p.y*1.3);
+      else if(p.boom) drawExplosion(ctx,p.x,p.y,p.t/p.dur,0.7,p.x*0.7+p.y*1.3);
       else { ctx.strokeStyle=`rgba(209,70,47,${1-p.t/p.dur})`; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(p.x,p.y,6+((p.t/p.dur)*20),0,Math.PI*2); ctx.stroke(); }
     });
 
     if(this.flash>0){ ctx.fillStyle=`rgba(200,40,20,${this.flash*0.3})`; ctx.fillRect(0,0,W,H); }
 
-    hudText('PILOTO MENSAJERO', 16, 12, 14, '#c8cfd6');
-    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name}`, 16, 30, 11, '#9c9782');
-    hudText(`ENTREGAS ${this.delivered}/${this.cfg.deliveries}`, W-16, 12, 13, '#e9e3d0', 'right');
-    hudText(`MENSAJES ${this.podsLeft}`, W-16, 30, 12, '#e9e3d0', 'right');
-    hudText(`VIENTO ${this.wind>=0?'→':'←'} ${Math.abs(this.wind).toFixed(0)} (desvía la carga al caer)`, W-16, 48, 10, '#7fd7e0', 'right');
-    for(let i=0;i<3;i++){ ctx.fillStyle = i<this.lives ? '#39e07a' : 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(W-16-i*18,68,5,0,Math.PI*2); ctx.fill(); }
-    if(lowAltitude) hudText('¡ZONA DE PELIGRO — MISILES DE PATRULLA!', W-16, 82, 11, '#d1462f', 'right');
+    // encuadre en primera persona: cabina del avión de entrega
+    drawCockpitFrame(ctx);
+
+    // ---- HUD agrupado en paneles ----
+    drawHudPanel(12,8,206,42);
+    hudText('PILOTO MENSAJERO', 22, 14, 13, '#c8cfd6');
+    hudText(`NIVEL ${this.level} · ${SKY_PALETTES[this.phase].name}`, 22, 31, 10, '#9c9782');
+
+    drawHudPanel(W-208,8,196,80, lowAltitude?'rgba(209,70,47,0.55)':'rgba(57,224,122,0.35)');
+    hudText(`ENTREGAS ${this.delivered}/${this.cfg.deliveries}`, W-198, 14, 12, '#e9e3d0');
+    hudText(`MENSAJES ${this.podsLeft}`, W-198, 31, 11, '#e9e3d0');
+    hudText(`VIENTO ${this.wind>=0?'→':'←'} ${Math.abs(this.wind).toFixed(0)}`, W-198, 47, 10, '#7fd7e0');
+    for(let i=0;i<3;i++){ ctx.fillStyle = i<this.lives ? '#39e07a' : 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(W-198+7+i*18,72,5,0,Math.PI*2); ctx.fill(); }
+    if(lowAltitude) hudText('¡PELIGRO: MISILES!', W-198, 90, 9, '#d1462f');
+
     hudText('↑↓ ALTITUD · ESPACIO SUELTA EL MENSAJE · MANTENTE SOBRE LA LÍNEA SEGURA', W/2, H-16, 10, '#6a7580', 'center');
   }
   getHealthFraction(){ return this.lives/3; }
@@ -1873,4 +2216,4 @@ renderMenu();
 showScreen('menu');
 
 /* Gancho de depuración (no interfiere con el juego) */
-window.__DEBUG__ = { Engine, Input, SAVE, startGame, openBriefing, endGame, ctx, CAMPAIGN, renderCampaignHub, openCampaignBriefing, startCampaignChapter, renderMenu, showScreen, unlockAchievement };
+window.__DEBUG__ = { Engine, Input, SAVE, startGame, openBriefing, endGame, ctx, CAMPAIGN, renderCampaignHub, openCampaignBriefing, startCampaignChapter, renderMenu, showScreen, unlockAchievement, setupMobileControls, teardownMobileControls, tryLockLandscape };
