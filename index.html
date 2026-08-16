@@ -83,9 +83,49 @@ button{font-family:var(--font-ui); cursor:pointer;}
   font-family:var(--font-hud); font-size:11px; letter-spacing:0.25em; color:var(--radar); text-transform:uppercase; opacity:0.85;
 }
 .hairline{height:1px; background:linear-gradient(90deg, transparent, var(--steel), transparent);}
+
+/* ---------------- Controles táctiles y horizontal forzado ---------------- */
+#mobile-controls{
+  position:absolute; inset:0; display:none; pointer-events:none; z-index:45;
+}
+#mobile-controls.active{ display:block; }
+.tbtn{
+  position:absolute; pointer-events:auto; user-select:none; -webkit-user-select:none; touch-action:none;
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-display); font-size:13px; letter-spacing:0.03em; color:var(--paper);
+  background:rgba(15,25,38,0.55); border:1.5px solid rgba(74,97,120,0.7); border-radius:50%;
+  width:58px; height:58px; text-transform:uppercase;
+}
+.tbtn.big{ width:76px; height:76px; font-size:15px; background:rgba(19,77,46,0.55); border-color:var(--radar); color:var(--radar); }
+.tbtn.wide{ border-radius:14px; width:84px; height:52px; }
+.tbtn:active, .tbtn.pressed{ background:rgba(57,224,122,0.35); border-color:var(--radar); transform:scale(0.94); }
+
+/* Sólo mostramos los controles táctiles en dispositivos táctiles reales
+   (evita que aparezcan de más en desktop con ventana angosta) */
+@media (hover:none) and (pointer:coarse){
+  #mobile-controls.active{ display:block; }
+}
+@media not all and (hover:none), not all and (pointer:coarse){
+  #mobile-controls{ display:none !important; }
+}
+
+#rotate-overlay{
+  display:none; position:fixed; inset:0; z-index:9999; background:var(--navy-950);
+  color:var(--paper); flex-direction:column; align-items:center; justify-content:center; gap:18px; text-align:center; padding:24px;
+}
+#rotate-overlay .icon{ font-size:54px; animation:rotateHint 1.8s ease-in-out infinite; }
+@keyframes rotateHint{ 0%,100%{ transform:rotate(0deg); } 50%{ transform:rotate(90deg); } }
+@media (hover:none) and (pointer:coarse) and (max-width:900px) and (orientation:portrait){
+  #rotate-overlay{ display:flex; }
+}
 </style>
 </head>
 <body>
+<div id="rotate-overlay">
+  <div class="icon">📱</div>
+  <div style="font-family:var(--font-display); font-size:20px; letter-spacing:0.05em; text-transform:uppercase; color:var(--radar);">Gira tu dispositivo</div>
+  <div style="font-family:var(--font-hud); font-size:12px; color:var(--paper-dim); max-width:280px;">Operación Tifón se juega en horizontal. Gira el teléfono para continuar.</div>
+</div>
 <div id="app">
 
   <!-- ===================== MAIN MENU ===================== -->
@@ -104,7 +144,7 @@ button{font-family:var(--font-ui); cursor:pointer;}
       <div id="hud" style="position:absolute; inset:0; pointer-events:none;"></div>
       <div id="game-toolbar" style="position:absolute; top:10px; right:10px; display:flex; gap:8px; z-index:40; pointer-events:auto;"></div>
       <div id="pause-overlay" class="hidden" style="position:absolute; inset:0; background:rgba(4,9,16,0.88); display:flex; align-items:center; justify-content:center; flex-direction:column; gap:16px; z-index:50;"></div>
-      <div id="mobile-controls" class="hidden"></div>
+      <div id="mobile-controls"></div>
     </div>
   </div>
 
